@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/as-kurosss/smithy/main/schemas/flow-v2.schema.json",
+  "title": "Smithy flow document",
+  "description": "Versioned contract for the smithy flow file format (v2). Compatibility rules: adding optional fields does NOT bump the version; removing/renaming fields or changing semantics requires v3 plus a migration path. Readers must reject unknown versions with an explicit error.",
+  "type": "object",
+  "required": ["version", "nodes", "edges"],
+  "additionalProperties": true,
+  "properties": {
+    "version": {
+      "const": 2,
+      "description": "Flow format version. Exactly 2."
+    },
+    "nodes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/node" }
+    },
+    "edges": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/edge" }
+    },
+    "breakpoints": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Optional. Node ids with breakpoints (designer/debug session hint).",
+      "default": []
+    }
+  },
+  "$defs": {
+    "node": {
+      "type": "object",
+      "required": ["id", "kind", "config"],
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Unique within the document."
+        },
+        "kind": {
+          "enum": ["start", "end", "if", "tool", "loop", "set"],
+          "description": "start: entry point (one per flow). end: terminator. if: decision (condition). loop: foreach/while. set: create/overwrite a variable. tool: execute a registered tool (requires 'tool')."
+        },
+        "tool": {
+          "type": "string",
+          "description": "Registered tool name (e.g. 'windows.click'). Required when kind == 'tool'."
+        },
+        "config": {
+          "type": "object",
+          "description": "Tool arguments or node parameters. For tool nodes: validated against the tool schema. Selector fields are flat: name, automation_id, control_type, class_name, pid (drag uses from_*/to_* prefixes). For set nodes: {var, type: auto|string|number|bool|json, value}."
+        },
+        "label": {
+          "type": "string",
+          "description": "Optional human-readable annotation shown on the block."
+        },
+        "save_as": {
+          "type": "string",
+          "description": "Optional. Store the tool result into this variable."
+        },
+        "condition": { "$ref": "#/$defs/condition" },
+        "loop": { "$ref": "#/$defs/loop" },
+        "position": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "Optional [x, y] canvas coordinates (designer layout)."
+        }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "required": ["id", "source", "source_handle", "target"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "source": {
+          "type": "string",
+          "description": "Id of the source node (must exist in nodes)."
+        },
+        "source_handle": {
+          "type": "string",
+          "description": "Output handle on the source node. Allowed values: start/tool/set → 'out'; if → 'true' | 'false' | 'error'; loop → 'body' | 'done' | 'error'. 'error' edges are the error-handling path."
+        },
+        "target": {
+          "type": "string",
+          "description": "Id of the target node (must exist in nodes)."
+        }
+      }
+    },
+    "condition": {
+      "type": "object",
+      "required": ["var", "op"],
+      "additionalProperties": true,
+      "properties": {
+        "var": { "type": "string" },
+        "op": {
+          "enum": ["eq", "ne", "contains", "not_contains", "gt", "lt", "exists", "is_empty"]
+        },
+        "value": {}
+      }
+    },
+    "loop": {
+      "type": "object",
+      "required": ["mode"],
+      "additionalProperties": true,
+      "properties": {
+        "mode": { "enum": ["foreach", "while"] },
+        "var": { "type": "string", "description": "foreach: sequence variable from scope." },
+        "as": { "type": "string", "description": "foreach: iteration variable name." },
+        "condition": { "$ref": "#/$defs/condition" },
+        "max_iterations": { "type": "integer", "minimum": 1, "default": 100 }
+      }
+    }
+  }
+}

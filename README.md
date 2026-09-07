@@ -177,7 +177,7 @@ translated to names automatically.
 A dev utility for inspecting UI elements at screen coordinates and generating tool configs:
 
 ```bash
-pip install smithy[capture]
+    pip install smithy-py[capture]
 
 # Single capture mode — one flow node
 python -m smithy.windows.tools.selector_capture single -o selectors.json
@@ -216,14 +216,57 @@ call per node. No magic: the recorder never sees the launched process
 fragile selectors ship with `WARNING` comments. Open `bot.py` in your
 editor, fill in the TODOs, run.
 
+## Visual Editor
+
+The flow is built in [smithy-designer](https://github.com/as-kurosss/smithy-designer) —
+a separate visual editor (MIT): drag-and-drop canvas, step debugger with
+breakpoints, XML-like selectors, typed variables.
+
+```bash
+pip install smithy-designer
+smithy-designer flow.json
+```
+
+## Flow format (v2)
+
+The flow file is a versioned JSON document — the contract between the
+designer, the file on disk, and the execution engine. The schema lives in
+[`schemas/flow-v2.schema.json`](schemas/flow-v2.schema.json).
+
+Compatibility rules:
+
+- **adding optional fields does not bump the version** — unknown keys are
+  ignored by older readers (`label`, `breakpoints` were added this way);
+- **removing/renaming fields or changing semantics requires v3** and a
+  migration path; readers must reject unknown versions with an explicit error;
+- the engine and the designer both validate `version` on load and never
+  silently overwrite a file of a different version.
+
+Example:
+
+```json
+{
+  "version": 2,
+  "nodes": [
+    { "id": "start", "kind": "start", "config": {}, "position": [120, 160] },
+    { "id": "a1", "kind": "tool", "tool": "windows.click",
+      "config": { "name": "OK", "control_type": "Button" },
+      "save_as": "result", "position": [340, 160] }
+  ],
+  "edges": [
+    { "id": "e1", "source": "start", "source_handle": "out", "target": "a1" }
+  ]
+}
+```
+
 ## Install
 
 ```bash
-pip install smithy               # core (no deps)
-pip install smithy[windows]     # Windows UIA tools
-pip install smithy[capture]      # selector capture (pynput + pyperclip)
-pip install smithy[all]          # everything
-pip install -e ".[dev]"          # development
+pip install smithy-py             # core (no deps)
+pip install smithy-py[windows]     # Windows UIA tools
+pip install smithy-py[capture]     # selector capture (pynput + pyperclip)
+pip install smithy-py[all]         # everything
+pip install -e ".[dev]"            # development
 ```
 
 ## Development
@@ -261,8 +304,7 @@ src/smithy/
 │   ├── http_queue.py    — HttpQueue client for the orchestrator
 │   ├── transactions.py  — REFramework-style runner + heartbeat
 │   ├── events.py        — EventBus, ToolEvent, Middleware
-│   └── errors.py        — Error hierarchy (ToolError, ElementNotFound, etc.)
-└── windows/
+│   └── errors.py        — Error hierarchy (ToolError, ElementNotFound, etc.)└── windows/
     ├── element.py       — SafeUIElement (thread-safe COM wrapper)
     ├── selector.py      — ElementSelector (UIA tree search + match counting)
     ├── selector_rank.py — Selector ranking (candidates, scoring, confidence)

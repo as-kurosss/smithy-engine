@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "smithy-py"
+name = "smithy-engine"
 version = "0.5.0"
 description = "Free Python RPA engine — create automation bots with simple API"
 readme = "README.md"

@@ -177,7 +177,7 @@ translated to names automatically.
 A dev utility for inspecting UI elements at screen coordinates and generating tool configs:
 
 ```bash
-    pip install smithy-py[capture]
+    pip install smithy-engine[capture]
 
 # Single capture mode — one flow node
 python -m smithy.windows.tools.selector_capture single -o selectors.json
@@ -218,7 +218,7 @@ editor, fill in the TODOs, run.
 
 ## Visual Editor
 
-The flow is built in [smithy-designer](https://github.com/as-kurosss/smithy-designer) —
+The flow is built in [smithy-designer](https://github.com/as-kurosss/smithy-core-designer) —
 a separate visual editor (MIT): drag-and-drop canvas, step debugger with
 breakpoints, XML-like selectors, typed variables.
 
@@ -262,10 +262,10 @@ Example:
 ## Install
 
 ```bash
-pip install smithy-py             # core (no deps)
-pip install smithy-py[windows]     # Windows UIA tools
-pip install smithy-py[capture]     # selector capture (pynput + pyperclip)
-pip install smithy-py[all]         # everything
+pip install smithy-engine             # core (no deps)
+pip install smithy-engine[windows]     # Windows UIA tools
+pip install smithy-engine[capture]     # selector capture (pynput + pyperclip)
+pip install smithy-engine[all]         # everything
 pip install -e ".[dev]"            # development
 ```
 

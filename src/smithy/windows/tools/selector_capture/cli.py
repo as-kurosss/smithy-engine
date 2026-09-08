@@ -121,6 +121,9 @@ def main(argv: list[str] | None = None) -> None:
 
     args = parser.parse_args(argv)
 
+    if args.backend != "windows":
+        parser.error(f"unsupported backend {args.backend!r}: only 'windows' is available")
+
     if args.command is None:
         parser.print_help()
         sys.exit(1)

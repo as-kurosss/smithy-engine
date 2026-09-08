@@ -17,9 +17,14 @@ selectors1.json
 selectors2.json
 selectors3.json
 test_output.txt
+test.txt
 
-# Lockfile (library, not app)
-uv.lock
+# Selector-capture / codegen outputs (machine-specific, generated)
+flow.json
+my.flow.json
+*.flow.json
+recording.json
+bot.py
 
 # Smith Studio (private, paid product)
 apps/smith-studio/

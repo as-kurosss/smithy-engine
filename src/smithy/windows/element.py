@@ -59,26 +59,51 @@ class SafeUIElement:
     async def get_info(self) -> dict[str, Any]:
         """Return a dict snapshot of identifying properties.
 
+        All properties are read in a single blocking executor hop (one
+        COM round-trip batch instead of seven sequential await hops).
         Individual ``None`` values are skipped so the result is always
         JSON-serializable.
         """
+        (
+            name,
+            ctype,
+            auto_id,
+            class_name,
+            pid,
+            rect,
+        ) = await run_blocking(_read_info, self._element)
         result: dict[str, Any] = {}
-        name = await self.get_name()
         if name:
             result["name"] = name
-        ctype = await self.get_control_type()
         if ctype and ctype != "None":
             result["control_type"] = ctype
-        auto_id = await self.get_automation_id()
         if auto_id and auto_id != "None":
             result["automation_id"] = auto_id
-        class_name = await self.get_class_name()
         if class_name and class_name != "None":
             result["class_name"] = class_name
-        pid = await self.get_pid()
         if pid:
             result["pid"] = pid
-        rect = await self.get_rect()
-        if rect and rect != "None,None,None,None":
-            result["rect"] = rect
+        if rect is not None:
+            left, top, right, bottom = rect
+            if any(value is not None for value in rect):
+                result["rect"] = f"{left},{top},{right},{bottom}"
         return result
+
+
+def _read_info(element: Any) -> tuple[str, str, str, str, int, tuple[Any, ...] | None]:
+    """Read all identifying properties in one executor hop."""
+    name = str(element.Name)
+    ctype = str(element.ControlTypeName)
+    auto_id = str(element.AutomationId)
+    class_name = str(element.ClassName)
+    pid = int(element.ProcessId)
+    rect = getattr(element, "BoundingRectangle", None)
+    rect_values: tuple[Any, ...] | None = None
+    if rect is not None:
+        rect_values = (
+            getattr(rect, "left", None),
+            getattr(rect, "top", None),
+            getattr(rect, "right", None),
+            getattr(rect, "bottom", None),
+        )
+    return name, ctype, auto_id, class_name, pid, rect_values

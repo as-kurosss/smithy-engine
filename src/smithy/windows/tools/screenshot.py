@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import ctypes.wintypes  # noqa: PLC0415
 import os
@@ -14,6 +15,50 @@ from smithy.core.tool import AbstractTool
 
 # https://learn.microsoft.com/en-us/windows/win32/dwm/window-attributes
 _DWMWA_EXTENDED_FRAME_BOUNDS = 9
+
+#: Optional sandbox root for screenshot files. When set, every save path
+#: must resolve inside this directory (prevents flow configs from
+#: overwriting arbitrary files).
+ENV_OUTPUT_ROOT = "SMITHY_OUTPUT_ROOT"
+
+_DPI_AWARENESS_PER_MONITOR_V2 = -4
+
+
+def _ensure_dpi_aware() -> None:
+    """Opt the process into per-monitor-v2 DPI awareness (best effort).
+
+    Without it, ``GetWindowRect``/DWM return virtualized coordinates on
+    scaled displays while ``mss`` grabs physical pixels — window
+    screenshots come out misaligned.
+    """
+    try:
+        user32 = ctypes.windll.user32
+        user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(_DPI_AWARENESS_PER_MONITOR_V2))
+    except Exception:
+        with contextlib.suppress(Exception):
+            ctypes.windll.user32.SetProcessDPIAware()
+
+
+def _confine_path(save_path: Path) -> Path:
+    """Resolve *save_path* against ``SMITHY_OUTPUT_ROOT`` when set.
+
+    Absolute paths outside the sandbox and relative escapes (``..``) are
+    rejected. Without the env var the path is used as-is.
+    """
+    root_raw = os.environ.get(ENV_OUTPUT_ROOT)
+    if not root_raw:
+        return save_path
+    root = Path(root_raw).resolve()
+    candidate = save_path if save_path.is_absolute() else root / save_path
+    resolved = candidate.resolve()
+    if not resolved.is_relative_to(root):
+        raise InvalidInput(
+            f"Screenshot path {str(save_path)!r} escapes the output root "
+            f"{str(root)!r} (set via {ENV_OUTPUT_ROOT})",
+            param="path",
+            input_value=str(save_path),
+        )
+    return resolved
 
 
 class ScreenshotTool(AbstractTool):
@@ -83,6 +128,7 @@ class ScreenshotTool(AbstractTool):
         # Ensure the file extension matches the requested format
         if save_path.suffix.lower() not in (".png", ".jpg", ".jpeg"):
             save_path = save_path.with_suffix(f".{fmt}")
+        save_path = _confine_path(save_path)
 
         pid = config.get("pid")
         if pid is not None and (isinstance(pid, bool) or not isinstance(pid, int)):
@@ -116,6 +162,7 @@ def _capture_full_screen(save_path: Path, fmt: str) -> Path:
     import mss
     from PIL import Image
 
+    _ensure_dpi_aware()
     with mss.mss() as sct:
         monitor = sct.monitors[1]  # primary monitor
         shot = sct.grab(monitor)
@@ -138,6 +185,7 @@ def _capture_window(pid: int, save_path: Path, fmt: str) -> Path:
     import mss
     from PIL import Image
 
+    _ensure_dpi_aware()
     user32 = ctypes.windll.user32
     hwnd = _find_window_by_pid(user32, pid)
     if hwnd is None:

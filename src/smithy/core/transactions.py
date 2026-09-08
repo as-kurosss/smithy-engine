@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 import threading
 import time
 from collections.abc import Awaitable, Callable
@@ -37,11 +38,20 @@ from smithy.core.errors import BusinessError, Cancelled, InfrastructureError, In
 from smithy.core.events import ToolEvent
 from smithy.core.queue import ClaimedItem, FinalStatus, LeaseRenewable, Queue
 
+logger = logging.getLogger(__name__)
+
 #: Id of the transaction currently processed in this context (if any).
 #: Stamped onto every :class:`ToolEvent` by :class:`TransactionContextMiddleware`.
 current_transaction_id: ContextVar[str | None] = ContextVar("smithy_transaction_id", default=None)
 
 StopReason = Literal["queue_empty", "stop_requested", "consecutive_system_errors"]
+
+#: Retries (with exponential backoff) for a transient claim failure before
+#: the failure is counted as a system error by the loop itself.
+_CLAIM_RETRIES = 3
+_CLAIM_RETRY_BASE_SECONDS = 1.0
+_CLAIM_SETTLE_SECONDS = 5.0
+_HEARTBEAT_JOIN_TIMEOUT_SECONDS = 5.0
 
 
 class TransactionContextMiddleware:
@@ -107,16 +117,50 @@ def _try_set_status(
     error: str | None = None,
     result: dict[str, Any] | None = None,
 ) -> str | None:
-    """Record the outcome; return ``None`` or an ``OwnershipLost`` message.
+    """Record the outcome; return ``None`` or a failure description.
 
     ``InvalidInput`` means the claim moved on (lease expired, another run
     claimed it) — the caller's counters treat it as a system failure.
+    Transport failures are downgraded to the same treatment: the item
+    stays ``in_progress`` until lease expiry, but the run itself survives.
     """
     try:
         queue.set_status(item_id, status, run_id=run_id, error=error, result=result)
     except InvalidInput as exc:
         return f"OwnershipLost: {exc}"
+    except Exception as exc:
+        logger.warning(
+            "set_status(%s, %s) failed — item stays in_progress until lease expiry: %s",
+            item_id,
+            status,
+            exc,
+        )
+        return f"StatusRecordFailed: {type(exc).__name__}: {exc}"
     return None
+
+
+def _claim_with_retry(
+    queue: Queue,
+    queue_name: str,
+    *,
+    run_id: str,
+    lease_seconds: int,
+) -> ClaimedItem | None:
+    """Claim with bounded retries + exponential backoff on transport errors.
+
+    ``KeyError`` (unknown queue) is permanent and is never retried.
+    """
+    last: Exception | None = None
+    for attempt in range(_CLAIM_RETRIES + 1):
+        try:
+            return queue.claim(queue_name, run_id=run_id, lease_seconds=lease_seconds)
+        except (InfrastructureError, OSError) as exc:
+            last = exc
+            if attempt < _CLAIM_RETRIES:
+                time.sleep(_CLAIM_RETRY_BASE_SECONDS * 2**attempt)
+    if last is None:
+        raise InfrastructureError("claim failed without a specific error")
+    raise last
 
 
 def _lost_outcome(report: TransactionReport, item: ClaimedItem, message: str) -> ItemOutcome:
@@ -125,6 +169,36 @@ def _lost_outcome(report: TransactionReport, item: ClaimedItem, message: str) ->
     outcome = ItemOutcome(item.id, "system_failed", item.attempts, message)
     report.errors.append(f"{item.id}: {message}")
     return outcome
+
+
+def _apply_success(
+    report: TransactionReport, item: ClaimedItem, lost: str | None
+) -> tuple[ItemOutcome, bool]:
+    """Shared bookkeeping: returns (outcome, reset_consecutive_counter)."""
+    if lost is None:
+        report.succeeded += 1
+        return ItemOutcome(item.id, "success", item.attempts), True
+    return _lost_outcome(report, item, lost), False
+
+
+def _apply_business(
+    report: TransactionReport, item: ClaimedItem, exc: Exception, lost: str | None
+) -> tuple[ItemOutcome, bool]:
+    if lost is None:
+        report.business_failed += 1
+        report.errors.append(f"{item.id}: {exc}")
+        return ItemOutcome(item.id, "business_failed", item.attempts, str(exc)), True
+    return _lost_outcome(report, item, lost), False
+
+
+def _apply_system(
+    report: TransactionReport, item: ClaimedItem, message: str, lost: str | None
+) -> tuple[ItemOutcome, bool]:
+    if lost is None:
+        report.system_failed += 1
+        report.errors.append(f"{item.id}: {message}")
+        return ItemOutcome(item.id, "system_failed", item.attempts, message), False
+    return _lost_outcome(report, item, lost), False
 
 
 def _emit_progress(hook: Callable[[ItemOutcome], None] | None, outcome: ItemOutcome) -> None:
@@ -171,9 +245,14 @@ class _SyncHeartbeat:
         self._thread.start()
 
     def stop(self) -> None:
-        """Signal the thread and wait for it (bounds the renewal count)."""
+        """Signal the thread and wait for it (bounds the renewal count).
+
+        The join is bounded: a hung HTTP renewal must not stall item
+        completion or shutdown. The heartbeat thread is a daemon, so an
+        abandoned renewal dies with the process.
+        """
         self._stop.set()
-        self._thread.join()
+        self._thread.join(timeout=_HEARTBEAT_JOIN_TIMEOUT_SECONDS)
 
     def _run(self) -> None:
         interval = _renew_interval(self._lease_seconds)
@@ -279,7 +358,17 @@ def run_transactions(
         if stop_checker is not None and stop_checker():
             report.stop_reason = "stop_requested"
             break
-        item = queue.claim(queue_name, run_id=run_id, lease_seconds=lease_seconds)
+        try:
+            item = _claim_with_retry(queue, queue_name, run_id=run_id, lease_seconds=lease_seconds)
+        except (InfrastructureError, OSError) as exc:
+            consecutive += 1
+            message = f"claim failed: {type(exc).__name__}: {exc}"
+            report.errors.append(message)
+            if consecutive >= stop_after_consecutive_system_errors:
+                report.stop_reason = "consecutive_system_errors"
+                break
+            time.sleep(_CLAIM_SETTLE_SECONDS)
+            continue
         if item is None:
             report.stop_reason = "queue_empty"
             break
@@ -304,23 +393,10 @@ def run_transactions(
                     param="result",
                 )
             lost = _try_set_status(queue, item.id, "success", run_id=run_id, result=result)
-            if lost is None:
-                report.succeeded += 1
-                consecutive = 0
-                outcome = ItemOutcome(item.id, "success", item.attempts)
-            else:
-                consecutive += 1
-                outcome = _lost_outcome(report, item, lost)
+            outcome, reset = _apply_success(report, item, lost)
         except BusinessError as exc:
             lost = _try_set_status(queue, item.id, "business_failed", run_id=run_id, error=str(exc))
-            if lost is None:
-                report.business_failed += 1
-                consecutive = 0
-                outcome = ItemOutcome(item.id, "business_failed", item.attempts, str(exc))
-                report.errors.append(f"{item.id}: {exc}")
-            else:
-                consecutive += 1
-                outcome = _lost_outcome(report, item, lost)
+            outcome, reset = _apply_business(report, item, exc, lost)
         except Cancelled as exc:
             lost = _try_set_status(
                 queue, item.id, "system_failed", run_id=run_id, error=f"Cancelled: {exc}"
@@ -334,7 +410,7 @@ def run_transactions(
             report.outcomes.append(outcome)
             _emit_progress(on_progress, outcome)
             break
-        except (InfrastructureError, Exception) as exc:
+        except Exception as exc:
             lost = _try_set_status(
                 queue,
                 item.id,
@@ -342,26 +418,24 @@ def run_transactions(
                 run_id=run_id,
                 error=f"{type(exc).__name__}: {exc}",
             )
-            if lost is None:
-                report.system_failed += 1
-                consecutive += 1
-                outcome = ItemOutcome(
-                    item.id, "system_failed", item.attempts, f"{type(exc).__name__}: {exc}"
-                )
-                report.errors.append(f"{item.id}: {type(exc).__name__}: {exc}")
-            else:
-                consecutive += 1
-                outcome = _lost_outcome(report, item, lost)
-            if consecutive >= stop_after_consecutive_system_errors:
-                report.stop_reason = "consecutive_system_errors"
-                report.outcomes.append(outcome)
-                _emit_progress(on_progress, outcome)
-                break
+            outcome, reset = _apply_system(report, item, f"{type(exc).__name__}: {exc}", lost)
         finally:
             if beat is not None:
                 beat.stop()
                 report.lease_renewals += beat.renewals
             current_transaction_id.reset(token)
+        if reset:
+            consecutive = 0
+        else:
+            consecutive += 1
+        if (
+            consecutive >= stop_after_consecutive_system_errors
+            and outcome.status == "system_failed"
+        ):
+            report.stop_reason = "consecutive_system_errors"
+            report.outcomes.append(outcome)
+            _emit_progress(on_progress, outcome)
+            break
         report.outcomes.append(outcome)
         _emit_progress(on_progress, outcome)
 
@@ -407,9 +481,19 @@ async def run_transactions_async(
         if stop_checker is not None and await _maybe_await(stop_checker()):
             report.stop_reason = "stop_requested"
             break
-        item = await asyncio.to_thread(
-            queue.claim, queue_name, run_id=run_id, lease_seconds=lease_seconds
-        )
+        try:
+            item = await asyncio.to_thread(
+                _claim_with_retry, queue, queue_name, run_id=run_id, lease_seconds=lease_seconds
+            )
+        except (InfrastructureError, OSError) as exc:
+            consecutive += 1
+            message = f"claim failed: {type(exc).__name__}: {exc}"
+            report.errors.append(message)
+            if consecutive >= stop_after_consecutive_system_errors:
+                report.stop_reason = "consecutive_system_errors"
+                break
+            await asyncio.sleep(_CLAIM_SETTLE_SECONDS)
+            continue
         if item is None:
             report.stop_reason = "queue_empty"
             break
@@ -443,13 +527,7 @@ async def run_transactions_async(
             lost = await asyncio.to_thread(
                 _try_set_status, queue, item.id, "success", run_id=run_id, result=result
             )
-            if lost is None:
-                report.succeeded += 1
-                consecutive = 0
-                outcome = ItemOutcome(item.id, "success", item.attempts)
-            else:
-                consecutive += 1
-                outcome = _lost_outcome(report, item, lost)
+            outcome, reset = _apply_success(report, item, lost)
         except BusinessError as exc:
             lost = await asyncio.to_thread(
                 _try_set_status,
@@ -459,14 +537,7 @@ async def run_transactions_async(
                 run_id=run_id,
                 error=str(exc),
             )
-            if lost is None:
-                report.business_failed += 1
-                consecutive = 0
-                outcome = ItemOutcome(item.id, "business_failed", item.attempts, str(exc))
-                report.errors.append(f"{item.id}: {exc}")
-            else:
-                consecutive += 1
-                outcome = _lost_outcome(report, item, lost)
+            outcome, reset = _apply_business(report, item, exc, lost)
         except Cancelled as exc:
             lost = await asyncio.to_thread(
                 _try_set_status,
@@ -485,7 +556,7 @@ async def run_transactions_async(
             report.outcomes.append(outcome)
             await _emit_progress_async(on_progress, outcome)
             break
-        except (InfrastructureError, Exception) as exc:
+        except Exception as exc:
             lost = await asyncio.to_thread(
                 _try_set_status,
                 queue,
@@ -494,26 +565,24 @@ async def run_transactions_async(
                 run_id=run_id,
                 error=f"{type(exc).__name__}: {exc}",
             )
-            if lost is None:
-                report.system_failed += 1
-                consecutive += 1
-                outcome = ItemOutcome(
-                    item.id, "system_failed", item.attempts, f"{type(exc).__name__}: {exc}"
-                )
-                report.errors.append(f"{item.id}: {type(exc).__name__}: {exc}")
-            else:
-                consecutive += 1
-                outcome = _lost_outcome(report, item, lost)
-            if consecutive >= stop_after_consecutive_system_errors:
-                report.stop_reason = "consecutive_system_errors"
-                report.outcomes.append(outcome)
-                await _emit_progress_async(on_progress, outcome)
-                break
+            outcome, reset = _apply_system(report, item, f"{type(exc).__name__}: {exc}", lost)
         finally:
             if beat_task is not None:
                 stop_beat.set()
                 await beat_task
             current_transaction_id.reset(token)
+        if reset:
+            consecutive = 0
+        else:
+            consecutive += 1
+        if (
+            consecutive >= stop_after_consecutive_system_errors
+            and outcome.status == "system_failed"
+        ):
+            report.stop_reason = "consecutive_system_errors"
+            report.outcomes.append(outcome)
+            await _emit_progress_async(on_progress, outcome)
+            break
         report.outcomes.append(outcome)
         await _emit_progress_async(on_progress, outcome)
 

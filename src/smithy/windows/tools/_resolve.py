@@ -7,43 +7,12 @@ from typing import Any
 
 from smithy.core.blocking import run_blocking
 from smithy.core.errors import ElementNotFound, InvalidInput
-from smithy.windows.selector import ElementSelector, parse_control_type
+from smithy.windows.selector import ElementSelector
 
 
 def build_selector(config: dict[str, Any]) -> ElementSelector | None:
     """Build a selector from inline config fields, or None if none are present."""
-    keys = ("name", "automation_id", "control_type", "class_name", "pid")
-    if not any(k in config for k in keys):
-        return None
-
-    if "pid" in config:
-        pid = config["pid"]
-        if isinstance(pid, bool) or not isinstance(pid, int):
-            raise InvalidInput(
-                "Invalid 'pid': expected an integer",
-                param="pid",
-                input_value=pid,
-            )
-    if "control_type" in config:
-        raw_ct = config["control_type"]
-        if not isinstance(raw_ct, str) or parse_control_type(raw_ct) is None:
-            raise InvalidInput(
-                f"Unknown control_type: {raw_ct!r}",
-                param="control_type",
-                input_value=raw_ct,
-            )
-    selector = ElementSelector()
-    if "name" in config:
-        selector = selector.with_name(config["name"])
-    if "automation_id" in config:
-        selector = selector.with_automation_id(config["automation_id"])
-    if "control_type" in config:
-        selector = selector.with_control_type(config["control_type"])
-    if "class_name" in config:
-        selector = selector.with_class_name(config["class_name"])
-    if "pid" in config:
-        selector = selector.with_pid(config["pid"])
-    return selector
+    return ElementSelector.from_config(config)
 
 
 async def resolve_point(config: dict[str, Any]) -> tuple[int, int] | None:

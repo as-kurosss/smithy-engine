@@ -89,9 +89,11 @@ class TestClickExtended:
         fake.RightClick = MagicMock()  # type: ignore[attr-defined]
         with patch.dict(sys.modules, {"uiautomation": fake}):
             _click_at(1, 2, "left", 1)
-            fake.Click.assert_called_once_with(1, 2)
+            fake.Click.assert_called_once_with(1, 2, waitTime=0.5)
             _click_at(3, 4, "right", 2)
             assert fake.RightClick.call_count == 2
+            assert fake.RightClick.call_args_list[0] == ((3, 4), {"waitTime": 0.0})
+            assert fake.RightClick.call_args_list[1] == ((3, 4), {"waitTime": 0.5})
 
         target = MagicMock()
         _click_element(target, "left", 2)
@@ -99,6 +101,8 @@ class TestClickExtended:
         target2 = MagicMock()
         _click_element(target2, "right", 2)
         assert target2.RightClick.call_count == 2
+        assert target2.RightClick.call_args_list[0] == ((), {"waitTime": 0.0})
+        assert target2.RightClick.call_args_list[1] == ((), {"waitTime": 0.5})
 
 
 class TestWaitDisappear:
@@ -522,7 +526,11 @@ class TestListElements:
             _element(Name="Cancel", AutomationId="cancel_btn", HasChildren=True),
         ]
         parent = MagicMock()
-        parent.GetChildren.return_value = kids
+        parent.GetFirstChildControl.return_value = kids[0]
+        parent.GetFirstChildControl.return_value.GetNextSiblingControl.return_value = kids[1]
+        (
+            parent.GetFirstChildControl.return_value.GetNextSiblingControl.return_value.GetNextSiblingControl
+        ).return_value = None
         with patch(
             "smithy.windows.tools.list_elements.resolve_element",
             new=AsyncMock(return_value=parent),

@@ -1,5 +1,78 @@
 # Changelog
 
+## Unreleased
+
+Audit-driven hardening release: correctness, security, resource-leak and
+performance fixes across core and windows modules.
+
+### Fixed
+
+- **Correctness:** `_CONTROL_TYPE_MAP` was shifted by one from `"toolbar"`
+  onward (and `"text"` alias pointed at `edit`) — `control_type="window"`
+  matched SplitButtons, `"pane"` matched Windows, `"text"` matched Edits.
+  The table now uses the official UIA ControlTypeIds (incl. new
+  `semanticzoom`), pinned by a regression test against
+  `uiautomation.ControlType`.
+- **Security (windows.process):** allowlist check now uses Windows path
+  semantics (`PureWindowsPath`) on every host OS; bare command names are
+  resolved via `PATH` only (never the current directory, closing the
+  exe-planting hole); `explorer.exe` removed from the default allowlist
+  (it accepts arbitrary launch targets as arguments).
+- **Resource leaks:** selector-capture recorder listeners are now stopped
+  on every exit path (previously every session leaked global keyboard/
+  mouse hooks); retried `HTTPError` responses are closed (socket leak);
+  `run_blocking` runs each call on a dedicated executor so a hung COM
+  call cannot starve the shared pool.
+- **Error masking:** `EventBus.emit` isolates middleware — a broken
+  middleware is logged and skipped instead of replacing a tool's result
+  or exception.
+- **Reliability:** transient `claim` failures are retried with
+  exponential backoff and counted as system errors instead of killing
+  the run; `set_status` transport failures no longer abort the loop
+  (item stays `in_progress` until lease expiry); heartbeat `join()` is
+  bounded so shutdown cannot stall on a hung HTTP renewal.
+- **wait tool:** a persistent UIA failure no longer yields a false
+  `disappear=True`/silent `appear` timeout — if no query ever succeeded,
+  the tool raises `PlatformError`.
+- **highlight:** draws an outline (`NULL_BRUSH`) instead of a solid
+  white fill; `duration_ms` capped at 10 s.
+- **click:** multi-clicks drop the inter-click wait so the OS recognizes
+  double-clicks (default 0.5 s pacing exceeded the double-click time).
+- **set_text/input_text:** both fallback errors are reported; raw
+  COM/uiautomation exceptions are wrapped into `PlatformError` like in
+  sibling tools.
+
+### Added
+
+- `HttpQueue(allow_insecure=True)` — plain-HTTP base URLs are rejected
+  unless explicitly allowed (loopback is always permitted); retried
+  error responses are closed.
+- `SMITHY_OUTPUT_ROOT` sandbox for screenshot paths; screenshots opt
+  into per-monitor-v2 DPI awareness (fixes misaligned window captures
+  on scaled displays).
+- `JsonlEventLogger` writes on a background thread (the event loop is
+  never blocked by disk I/O) and supports the context-manager protocol.
+- `ElementSelector.from_config()` — shared config→selector building
+  (previously duplicated in three places).
+- `InMemoryQueue.claim` is O(log n) via a per-queue heap; SQLite
+  backend enables WAL + `busy_timeout` and indexes `seq`.
+- `RetryTool(jitter=...)` — spread retries out under contention;
+  invalid constructor args raise `InvalidInput` (consistent with core).
+- `RetryTool`/registry: registering a tool with an empty `schema()`
+  emits a `UserWarning` (validation is silently disabled for it).
+- Config: `SMITHY_BLOCKING_TIMEOUT`/`SMITHY_ALLOWED_COMMANDS`/
+  `SMITHY_OUTPUT_ROOT` no longer leak into the robot config document;
+  `Config.__getattr__` no longer risks infinite recursion during
+  unpickling.
+
+### Changed
+
+- CI/release workflows pin all actions to commit SHAs; `id-token:
+  write` is scoped to the `publish` job only. Dependabot, SECURITY.md
+  added; broken `requirements.lock` removed in favor of `uv.lock`;
+  generated recorder outputs (`flow.json`, `recording.json`, `bot.py`,
+  `test.txt`) untracked.
+
 ## 0.5.0
 
 Playwright-style codegen: recorded flows render as runnable bot scripts.

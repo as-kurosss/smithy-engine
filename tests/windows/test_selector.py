@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from smithy.core.errors import ElementNotFound, InvalidInput, PlatformError
-from smithy.windows.selector import ElementSelector, parse_control_type
+from smithy.windows.selector import _CONTROL_TYPE_MAP, ElementSelector, parse_control_type
 
 
 class TestElementSelector:
@@ -77,11 +77,23 @@ class TestParseControlType:
     def test_edit(self) -> None:
         assert parse_control_type("Edit") == 50004
 
-    def test_text_alias(self) -> None:
-        assert parse_control_type("Text") == 50004
+    def test_text(self) -> None:
+        assert parse_control_type("Text") == 50020
+
+    def test_toolbar(self) -> None:
+        assert parse_control_type("ToolBar") == 50021
 
     def test_window(self) -> None:
-        assert parse_control_type("Window") == 50031
+        assert parse_control_type("Window") == 50032
+
+    def test_pane(self) -> None:
+        assert parse_control_type("Pane") == 50033
+
+    def test_separator(self) -> None:
+        assert parse_control_type("Separator") == 50038
+
+    def test_appbar(self) -> None:
+        assert parse_control_type("AppBar") == 50040
 
     def test_case_insensitive(self) -> None:
         assert parse_control_type("button") == 50000
@@ -89,6 +101,39 @@ class TestParseControlType:
 
     def test_unknown_returns_none(self) -> None:
         assert parse_control_type("NoSuchType") is None
+
+    def test_matches_uiautomation_control_type(self) -> None:
+        pytest.importorskip("uiautomation")
+        import uiautomation as auto
+
+        compound = {
+            "checkbox": "CheckBox",
+            "combobox": "ComboBox",
+            "hyperlink": "Hyperlink",
+            "listitem": "ListItem",
+            "menubar": "MenuBar",
+            "menuitem": "MenuItem",
+            "progressbar": "ProgressBar",
+            "radiobutton": "RadioButton",
+            "scrollbar": "ScrollBar",
+            "statusbar": "StatusBar",
+            "tabitem": "TabItem",
+            "toolbar": "ToolBar",
+            "tooltip": "ToolTip",
+            "treeitem": "TreeItem",
+            "datagrid": "DataGrid",
+            "dataitem": "DataItem",
+            "splitbutton": "SplitButton",
+            "headeritem": "HeaderItem",
+            "titlebar": "TitleBar",
+            "semanticzoom": "SemanticZoom",
+            "appbar": "AppBar",
+        }
+
+        for type_name, expected_id in _CONTROL_TYPE_MAP.items():
+            uia_name = compound.get(type_name, type_name.capitalize()) + "Control"
+            uia_id = getattr(auto.ControlType, uia_name)
+            assert expected_id == int(uia_id), type_name
 
 
 class TestProcessTool:

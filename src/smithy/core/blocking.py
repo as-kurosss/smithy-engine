@@ -5,6 +5,11 @@ Every blocking offload in the windows tools goes through :func:`run_blocking`,
 which bounds the wait: default 30 s, tunable via the ``SMITHY_BLOCKING_TIMEOUT``
 environment variable. A timeout raises :class:`PlatformError` instead of
 leaving the bot blocked forever on a starved thread pool.
+
+Each call runs on a dedicated single-thread executor so a hung call can only
+occupy its own worker thread — it can never starve a shared pool and delay
+unrelated tools. A thread whose call has timed out is abandoned in place (it
+is not interruptible); it will be joined at interpreter exit.
 """
 
 from __future__ import annotations
@@ -13,6 +18,7 @@ import asyncio
 import functools
 import os
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from smithy.core.errors import PlatformError
@@ -34,7 +40,7 @@ async def run_blocking(
     timeout: float | None = None,
     **kwargs: Any,
 ) -> Any:
-    """Run ``fn(*args, **kwargs)`` in the default executor with a timeout.
+    """Run ``fn(*args, **kwargs)`` in a dedicated worker thread with a timeout.
 
     Raises:
         PlatformError: If the call does not finish within *timeout* seconds
@@ -42,8 +48,9 @@ async def run_blocking(
     """
     limit = timeout if timeout is not None else _default_timeout()
     loop = asyncio.get_running_loop()
-    future = loop.run_in_executor(None, functools.partial(fn, *args, **kwargs))
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="smithy-blocking")
     try:
+        future = loop.run_in_executor(executor, functools.partial(fn, *args, **kwargs))
         return await asyncio.wait_for(future, limit)
     except TimeoutError as exc:
         name = getattr(fn, "__qualname__", None) or repr(fn)
@@ -51,3 +58,5 @@ async def run_blocking(
             f"blocking call {name} timed out after {limit:g}s "
             "(tune SMITHY_BLOCKING_TIMEOUT if this is expected)",
         ) from exc
+    finally:
+        executor.shutdown(wait=False)

@@ -17,6 +17,13 @@ from smithy.core.errors import ConfigError
 
 _MISSING = object()
 
+#: Framework-owned ``SMITHY_*`` settings that are consumed directly by
+#: the engine (blocking.py, process.py) and must not leak into the robot
+#: config document as fake keys.
+_RESERVED_ENV_KEYS: frozenset[str] = frozenset(
+    {"blocking_timeout", "allowed_commands", "output_root"}
+)
+
 
 class Config:
     """Immutable attribute-style view over a loaded TOML document.
@@ -35,6 +42,10 @@ class Config:
         raise AttributeError(f"Config is frozen; cannot set {name!r}")
 
     def __getattr__(self, name: str) -> Any:
+        if name == "_data":
+            # Avoid infinite recursion when __getattr__ runs before
+            # __init__ (copy.copy, unpickling).
+            raise AttributeError(name)
         try:
             return self._data[name]
         except KeyError:
@@ -110,12 +121,15 @@ def _apply_env_overlay(document: dict[str, Any], prefix: str) -> None:
     ``SMITHY_ROBOT__QUEUE`` sets ``robot.queue``; double underscore nests,
     single underscores stay literal (``SMITHY_ROBOT_NAME`` → ``robot_name``).
     Values are typed with TOML scalar syntax (ints, bools, quoted strings).
+    Framework-owned settings (``SMITHY_BLOCKING_TIMEOUT``,
+    ``SMITHY_ALLOWED_COMMANDS``) are skipped — they configure the engine,
+    not the robot document.
     """
     for name, raw in os.environ.items():
         if not name.startswith(prefix):
             continue
         rest = name[len(prefix) :].lower()
-        if not rest:
+        if not rest or rest in _RESERVED_ENV_KEYS:
             continue
         _deep_set(document, rest.split("__"), _parse_env_value(raw))
 
@@ -152,7 +166,8 @@ def load_config(
     if env_prefix:
         _apply_env_overlay(document, env_prefix)
     frozen = _freeze(document)
-    assert isinstance(frozen, Config)
+    if not isinstance(frozen, Config):
+        raise ConfigError("Config root must be a table", input_value=str(file))
     problems: list[str] = []
     for key in required:
         if _lookup(frozen, key) is _MISSING:

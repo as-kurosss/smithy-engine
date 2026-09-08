@@ -193,7 +193,7 @@ def stub() -> Iterator[tuple[str, InMemoryQueue]]:
 
 
 def _client(base_url: str) -> HttpQueue:
-    return HttpQueue(base_url, agent_id=AGENT_ID, token="secret")
+    return HttpQueue(base_url, agent_id=AGENT_ID, token="secret", allow_insecure=True)
 
 
 def test_full_flow_over_http(stub: tuple[str, InMemoryQueue]) -> None:
@@ -333,11 +333,27 @@ def test_meaningful_errors_never_retried(monkeypatch: pytest.MonkeyPatch) -> Non
         {"base_url": "http://x", "agent_id": AGENT_ID, "token": "s", "timeout_seconds": True},
         {"base_url": "http://x", "agent_id": AGENT_ID, "token": "s", "max_retries": -1},
         {"base_url": "http://x", "agent_id": AGENT_ID, "token": "s", "max_retries": True},
+        {"base_url": "ftp://x", "agent_id": AGENT_ID, "token": "s"},
     ],
 )
 def test_constructor_validation(kwargs: dict[str, Any]) -> None:
     with pytest.raises(InvalidInput):
         HttpQueue(**kwargs)
+
+
+def test_plain_http_requires_allow_insecure() -> None:
+    with pytest.raises(InvalidInput, match="https"):
+        HttpQueue("http://example.com/api", agent_id=AGENT_ID, token="s")
+
+
+def test_plain_http_loopback_allowed() -> None:
+    client = HttpQueue("http://127.0.0.1:9000/api", agent_id=AGENT_ID, token="s")
+    assert client._base_url == "http://127.0.0.1:9000/api"
+
+
+def test_plain_http_allowed_with_flag() -> None:
+    client = HttpQueue("http://example.com/api", agent_id=AGENT_ID, token="s", allow_insecure=True)
+    assert client._base_url == "http://example.com/api"
 
 
 def test_runner_end_to_end_over_http(stub: tuple[str, InMemoryQueue]) -> None:

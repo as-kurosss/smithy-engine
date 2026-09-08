@@ -257,15 +257,9 @@ def rank_best_selector(
 
 def _uia_count_matches(config: dict[str, str]) -> int:
     """Count live desktop matches for *config* (cap 2)."""
-    selector = ElementSelector()
-    if "name" in config:
-        selector = selector.with_name(config["name"])
-    if "automation_id" in config:
-        selector = selector.with_automation_id(config["automation_id"])
-    if "control_type" in config:
-        selector = selector.with_control_type(config["control_type"])
-    if "class_name" in config:
-        selector = selector.with_class_name(config["class_name"])
+    selector = ElementSelector.from_config(dict(config))
+    if selector is None:
+        return 0
     return selector.count_from_desktop(limit=2)
 
 

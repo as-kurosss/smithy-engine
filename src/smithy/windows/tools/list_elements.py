@@ -64,8 +64,24 @@ class ListElementsTool(AbstractTool):
                 param="max_items",
                 input_value=max_items,
             )
-        children = await run_blocking(element.GetChildren)
-        items = [_describe(child) for child in children[:max_items]]
+
+        def _collect_bounded() -> list[Any]:
+            """Walk children until *max_items*, avoiding a full enumeration."""
+            children: list[Any] = []
+            try:
+                child = element.GetFirstChildControl()
+            except Exception:
+                return children
+            while child is not None and len(children) < max_items:
+                children.append(child)
+                try:
+                    child = child.GetNextSiblingControl()
+                except Exception:
+                    break
+            return children
+
+        children = await run_blocking(_collect_bounded)
+        items = [_describe(child) for child in children]
         return {"items": items, "count": len(items)}
 
 

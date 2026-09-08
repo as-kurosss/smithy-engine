@@ -54,7 +54,8 @@ class HighlightTool(AbstractTool):
                 "duration_ms": {
                     "type": "integer",
                     "minimum": 0,
-                    "description": "How long to show the rectangle",
+                    "maximum": 10000,
+                    "description": "How long to show the rectangle (max 10 s)",
                 },
             },
             "required": [],
@@ -79,9 +80,14 @@ class HighlightTool(AbstractTool):
                 input_value=color,
             )
         duration_ms = config.get("duration_ms", 1000)
-        if isinstance(duration_ms, bool) or not isinstance(duration_ms, int) or duration_ms < 0:
+        if (
+            isinstance(duration_ms, bool)
+            or not isinstance(duration_ms, int)
+            or duration_ms < 0
+            or duration_ms > 10000
+        ):
             raise InvalidInput(
-                "Invalid 'duration_ms': expected an integer >= 0",
+                "Invalid 'duration_ms': expected an integer in [0, 10000]",
                 param="duration_ms",
                 input_value=duration_ms,
             )
@@ -103,7 +109,7 @@ def _bounding_rect(element: Any) -> Any:
 
 
 def _flash_rect(left: int, top: int, right: int, bottom: int, color: int, duration_ms: int) -> None:
-    """Draw a rectangle on the screen DC, wait, then erase (runs in executor)."""
+    """Draw an outline rectangle on the screen DC, wait, then erase (runs in executor)."""
     import ctypes
 
     user32 = ctypes.windll.user32
@@ -111,11 +117,12 @@ def _flash_rect(left: int, top: int, right: int, bottom: int, color: int, durati
     hdc = user32.GetDC(None)
     try:
         pen = gdi32.CreatePen(0, 3, color)  # PS_SOLID, 3px
-        old = gdi32.SelectObject(hdc, pen)
+        old_pen = gdi32.SelectObject(hdc, pen)
+        old_brush = gdi32.SelectObject(hdc, gdi32.GetStockObject(5))  # NULL_BRUSH
         gdi32.Rectangle(hdc, left, top, right, bottom)
-        gdi32.SelectObject(hdc, old)
+        gdi32.SelectObject(hdc, old_pen)
+        gdi32.SelectObject(hdc, old_brush)
         gdi32.DeleteObject(pen)
-        user32.UpdateWindow(None)
         time.sleep(duration_ms / 1000)
     finally:
         user32.ReleaseDC(None, hdc)

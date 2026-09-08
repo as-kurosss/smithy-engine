@@ -13,6 +13,7 @@ the smithy-cloud contract exactly:
 
 from __future__ import annotations
 
+import heapq
 import json
 import sqlite3
 import threading
@@ -162,6 +163,10 @@ class InMemoryQueue:
         self._items: dict[str, _Record] = {}
         self._keys: dict[tuple[str, str], str] = {}
         self._seq = 0
+        # Min-heap of (seq, item_id) per queue — makes claim O(log n)
+        # instead of a full scan. Entries for items that are no longer
+        # "new" are skipped lazily on pop.
+        self._new: dict[str, list[tuple[int, str]]] = {}
 
     def get_or_create_queue(self, name: str, *, max_attempts: int = 3) -> QueueInfo:
         _check_max_attempts(max_attempts)
@@ -190,6 +195,7 @@ class InMemoryQueue:
             self._items[record.id] = record
             if idempotency_key is not None:
                 self._keys[(queue, idempotency_key)] = record.id
+            heapq.heappush(self._new.setdefault(queue, []), (record.seq, record.id))
             return self._view(record)
 
     def claim(self, queue: str, *, run_id: str, lease_seconds: int = 300) -> ClaimedItem | None:
@@ -198,12 +204,16 @@ class InMemoryQueue:
         with self._lock:
             self._require_queue(queue)
             self._reset_expired_locked(queue, now)
-            candidates = [
-                rec for rec in self._items.values() if rec.queue == queue and rec.status == "new"
-            ]
-            if not candidates:
+            heap = self._new.get(queue, [])
+            record: _Record | None = None
+            while heap:
+                _seq, item_id = heapq.heappop(heap)
+                candidate = self._items.get(item_id)
+                if candidate is not None and candidate.queue == queue and candidate.status == "new":
+                    record = candidate
+                    break
+            if record is None:
                 return None
-            record = min(candidates, key=lambda rec: rec.seq)
             record.status = "in_progress"
             record.run_id = run_id
             record.attempts += 1
@@ -211,7 +221,6 @@ class InMemoryQueue:
             record.error = None
             record.result = None
             lease = record.lease_expires_at
-            assert lease is not None
             return ClaimedItem(
                 id=record.id,
                 queue=queue,
@@ -238,6 +247,7 @@ class InMemoryQueue:
                 record.status = "new"
                 record.run_id = None
                 record.lease_expires_at = None
+                heapq.heappush(self._new.setdefault(record.queue, []), (record.seq, record.id))
             else:
                 record.status = status
             record.error = error
@@ -271,6 +281,7 @@ class InMemoryQueue:
             )
 
     def _reset_expired_locked(self, queue: str, now: datetime) -> None:
+        heap = self._new.setdefault(queue, [])
         for record in self._items.values():
             if (
                 record.queue == queue
@@ -281,6 +292,7 @@ class InMemoryQueue:
                 record.status = "new"
                 record.run_id = None
                 record.lease_expires_at = None
+                heapq.heappush(heap, (record.seq, record.id))
 
     @staticmethod
     def _view(record: _Record) -> QueueItem:
@@ -318,6 +330,7 @@ CREATE TABLE IF NOT EXISTS items (
     UNIQUE (queue, idempotency_key)
 );
 CREATE INDEX IF NOT EXISTS ix_items_queue_status ON items (queue, status);
+CREATE INDEX IF NOT EXISTS ix_items_seq ON items (seq);
 """
 
 
@@ -329,6 +342,8 @@ class SqliteQueue:
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
         with self._conn:
             self._conn.executescript(_SCHEMA)
 
@@ -401,7 +416,8 @@ class SqliteQueue:
                 (run_id, lease.isoformat(), now.isoformat(), row["id"]),
             )
             current = self._get(row["id"])
-            assert current["lease_expires_at"] is not None
+            if current["lease_expires_at"] is None:
+                raise ValueError(f"Claimed item {row['id']!r} has no lease timestamp")
             return ClaimedItem(
                 id=current["id"],
                 queue=queue,
@@ -471,7 +487,8 @@ class SqliteQueue:
         row = self._conn.execute(
             "SELECT max_attempts FROM queues WHERE name = ?", (queue,)
         ).fetchone()
-        assert row is not None
+        if row is None:
+            raise KeyError(f"Unknown queue: {queue!r}")
         return int(row["max_attempts"])
 
     def _next_seq_locked(self) -> int:
@@ -489,7 +506,8 @@ class SqliteQueue:
     @staticmethod
     def _view(row: sqlite3.Row) -> QueueItem:
         status = str(row["status"])
-        assert status in TERMINAL_STATUSES or status in ("new", "in_progress")
+        if status not in TERMINAL_STATUSES and status not in ("new", "in_progress"):
+            raise ValueError(f"Unknown item status in database: {status!r}")
         return QueueItem(
             id=str(row["id"]),
             queue=str(row["queue"]),

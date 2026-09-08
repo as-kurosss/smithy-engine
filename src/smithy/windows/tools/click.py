@@ -125,14 +125,18 @@ class ClickTool(AbstractTool):
 
 
 def _click_at(x: int, y: int, button: str, clicks: int) -> None:
-    """Click screen coordinates (runs in an executor)."""
+    """Click screen coordinates (runs in an executor).
+
+    Multi-clicks drop the post-click wait on every click but the last so
+    the OS recognizes the sequence as a double-click (default 0.5 s
+    pacing would exceed the system double-click time).
+    """
     import uiautomation as auto
 
-    for _ in range(clicks):
-        if button == "right":
-            auto.RightClick(x, y)
-        else:
-            auto.Click(x, y)
+    click = auto.RightClick if button == "right" else auto.Click
+    for index in range(clicks):
+        wait = 0.5 if index == clicks - 1 else 0.0
+        click(x, y, waitTime=wait)
 
 
 def _click_element(element: Any, button: str, clicks: int) -> None:
@@ -141,7 +145,8 @@ def _click_element(element: Any, button: str, clicks: int) -> None:
     if button == "left" and clicks == 2:
         target.DoubleClick()
     elif button == "right":
-        for _ in range(clicks):
-            target.RightClick()
+        for index in range(clicks):
+            wait = 0.5 if index == clicks - 1 else 0.0
+            target.RightClick(waitTime=wait)
     else:
         target.Click()

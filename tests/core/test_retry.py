@@ -98,9 +98,11 @@ class TestRetryTool:
 
     def test_invalid_arguments_rejected(self) -> None:
         inner = FlakyTool(failures=0)
-        with pytest.raises(ValueError, match="attempts"):
+        with pytest.raises(InvalidInput, match="attempts"):
             RetryTool(inner, attempts=0)
-        with pytest.raises(ValueError, match="delay_ms"):
+        with pytest.raises(InvalidInput, match="delay_ms"):
             RetryTool(inner, delay_ms=-1)
-        with pytest.raises(ValueError, match="retry_on"):
+        with pytest.raises(InvalidInput, match="jitter"):
+            RetryTool(inner, jitter=1.5)
+        with pytest.raises(InvalidInput, match="retry_on"):
             RetryTool(inner, retry_on=())

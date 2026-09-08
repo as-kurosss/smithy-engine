@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -53,8 +56,20 @@ class EventBus:
         """Append a middleware to the pipeline."""
         self._middlewares.append(middleware)
 
+    def remove_middleware(self, middleware: Middleware) -> None:
+        """Remove a middleware from the pipeline.
+
+        Raises:
+            ValueError: If the middleware is not registered.
+        """
+        self._middlewares.remove(middleware)
+
     async def emit(self, event: ToolEvent) -> ToolEvent | None:
         """Run *event* through the middleware pipeline.
+
+        Each middleware is isolated: if one raises, the exception is logged
+        and skipped, so a broken middleware can never mask a tool result
+        or error.
 
         Returns the final (possibly transformed) event, or ``None`` if
         a middleware stopped propagation.
@@ -63,5 +78,11 @@ class EventBus:
         for mw in self._middlewares:
             if current is None:
                 return None
-            current = await mw(current)
+            try:
+                current = await mw(current)
+            except Exception:
+                logger.exception(
+                    "event middleware %r failed; skipping it",
+                    mw,
+                )
         return current

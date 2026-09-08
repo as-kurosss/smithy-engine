@@ -86,15 +86,18 @@ def _request(
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 raw = response.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
-            if exc.code in _RETRYABLE_STATUS and attempt < max_retries:
-                time.sleep(_RETRY_BASE_SECONDS * 2**attempt)
-                attempt += 1
-                continue
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise HttpQueueError(
-                f"{method} {url} failed with HTTP {exc.code}: {detail}",
-                status_code=exc.code,
-            ) from exc
+            try:
+                if exc.code in _RETRYABLE_STATUS and attempt < max_retries:
+                    time.sleep(_RETRY_BASE_SECONDS * 2**attempt)
+                    attempt += 1
+                    continue
+                detail = exc.read().decode("utf-8", errors="replace")
+                raise HttpQueueError(
+                    f"{method} {url} failed with HTTP {exc.code}: {detail}",
+                    status_code=exc.code,
+                ) from exc
+            finally:
+                exc.close()
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             if attempt < max_retries:
                 time.sleep(_RETRY_BASE_SECONDS * 2**attempt)
@@ -111,7 +114,12 @@ class HttpQueue:
     """Queue backend over the smithy-cloud HTTP contract.
 
     *base_url* is the API root including the version/prefix path,
-    e.g. ``"http://host:8000/api"`` for a default smithy-cloud deployment.
+    e.g. ``"https://host/api"`` for a default smithy-cloud deployment.
+
+    Non-HTTPS *base_url* is rejected unless ``allow_insecure=True`` — the
+    Bearer token would otherwise travel in cleartext. Plain-HTTP loopback
+    addresses (``localhost``, ``127.0.0.1``, ``::1``) are always accepted
+    so local development and test servers work out of the box.
     """
 
     def __init__(
@@ -122,6 +130,7 @@ class HttpQueue:
         token: str,
         timeout_seconds: float = 30.0,
         max_retries: int = 3,
+        allow_insecure: bool = False,
     ) -> None:
         if not base_url or not isinstance(base_url, str):
             raise InvalidInput("base_url must be a non-empty string", param="base_url")
@@ -139,6 +148,22 @@ class HttpQueue:
             raise InvalidInput(
                 "max_retries must be an int >= 0", param="max_retries", input_value=max_retries
             )
+        parsed = urllib.parse.urlparse(base_url)
+        if parsed.scheme not in ("http", "https"):
+            raise InvalidInput(
+                "base_url must be an http(s) URL",
+                param="base_url",
+                input_value=base_url,
+            )
+        if parsed.scheme != "https" and not allow_insecure:
+            host = (parsed.hostname or "").lower()
+            loopback = host in ("localhost", "127.0.0.1", "::1")
+            if not loopback:
+                raise InvalidInput(
+                    "base_url must use https:// (pass allow_insecure=True to override)",
+                    param="base_url",
+                    input_value=base_url,
+                )
         self._base_url = base_url.rstrip("/")
         self._agent_id = agent_id
         self._token = token

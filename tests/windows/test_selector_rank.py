@@ -30,7 +30,8 @@ def _always(n: int) -> Callable[[dict[str, str]], int]:
 class TestControlTypeDisplay:
     def test_numeric_id_translates(self) -> None:
         assert control_type_display("50000") == "button"
-        assert control_type_display("50031") == "window"
+        assert control_type_display("50032") == "window"
+        assert control_type_display("50031") == "splitbutton"
 
     def test_alias_id_prefers_first_name(self) -> None:
         assert control_type_display("50004") == "edit"

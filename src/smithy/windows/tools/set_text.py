@@ -102,9 +102,15 @@ class SetTextTool(AbstractTool):
                 await run_blocking(_send_wm_settext, hwnd, text)
                 return {"status": "set", "text": text, "method": "wm_settext"}
         except Exception as exc:
-            last_error = exc
+            wm_error = exc
+            raise PlatformError(
+                "Element does not support programmatic text setting "
+                f"(value_pattern: {last_error!r}; wm_settext: {wm_error!r})",
+                source=wm_error,
+            ) from wm_error
 
         raise PlatformError(
-            "Element does not support programmatic text setting",
+            f"Element does not support programmatic text setting "
+            f"(value_pattern: {last_error!r}; no native window handle)",
             source=last_error,
         ) from last_error

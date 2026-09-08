@@ -141,11 +141,18 @@ def _emit_node(node: Mapping[str, Any]) -> list[str]:
     return lines
 
 
+_SELECTOR_KEYS = ("name", "automation_id", "control_type", "class_name")
+
+
 def _selector_warnings(args: Mapping[str, Any]) -> tuple[str, ...]:
-    """Return static fragility hints for selector *args* (never raises)."""
-    text_only = {k: v for k, v in args.items() if isinstance(v, str)}
+    """Return static fragility hints for selector *args* (never raises).
+
+    Only selector fields are inspected — the typed ``text`` value is not
+    a selector and would otherwise trigger false "dynamic name" warnings.
+    """
+    selector_args = {k: v for k, v in args.items() if k in _SELECTOR_KEYS and isinstance(v, str)}
     try:
-        _, warnings = stability_penalty(text_only)
+        _, warnings = stability_penalty(selector_args)
     except Exception:
         return ()
     return warnings

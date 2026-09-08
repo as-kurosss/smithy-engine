@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
-from smithy.core.errors import ElementNotFound, PlatformError
+from smithy.core.errors import ElementNotFound, InvalidInput, PlatformError
 
 
 @dataclass
@@ -50,6 +50,49 @@ class ElementSelector:
     def with_class_name(self, class_name: str) -> ElementSelector:
         """Filter by class name (returns a new selector)."""
         return replace(self, class_name=class_name)
+
+    @classmethod
+    def from_config(cls, config: dict[str, Any]) -> ElementSelector | None:
+        """Build a selector from tool-config fields, or ``None`` if none present.
+
+        Recognized fields: ``name``, ``automation_id``, ``control_type``,
+        ``class_name``, ``pid``.
+
+        Raises:
+            InvalidInput: If ``pid`` is not an integer or ``control_type``
+                is not a known control type name.
+        """
+        keys = ("name", "automation_id", "control_type", "class_name", "pid")
+        if not any(key in config for key in keys):
+            return None
+        if "pid" in config:
+            pid = config["pid"]
+            if isinstance(pid, bool) or not isinstance(pid, int):
+                raise InvalidInput(
+                    "Invalid 'pid': expected an integer",
+                    param="pid",
+                    input_value=pid,
+                )
+        if "control_type" in config:
+            raw_ct = config["control_type"]
+            if not isinstance(raw_ct, str) or parse_control_type(raw_ct) is None:
+                raise InvalidInput(
+                    f"Unknown control_type: {raw_ct!r}",
+                    param="control_type",
+                    input_value=raw_ct,
+                )
+        selector = cls()
+        if "name" in config:
+            selector = selector.with_name(config["name"])
+        if "automation_id" in config:
+            selector = selector.with_automation_id(config["automation_id"])
+        if "control_type" in config:
+            selector = selector.with_control_type(config["control_type"])
+        if "class_name" in config:
+            selector = selector.with_class_name(config["class_name"])
+        if "pid" in config:
+            selector = selector.with_pid(config["pid"])
+        return selector
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to a dict of non-None fields (for JSON serialization)."""
@@ -199,9 +242,17 @@ class ElementSelector:
 
         def compare(ctrl: Any, depth: int) -> bool:
             # All set fields combine with AND so pid scoping always applies.
+            # Stale elements raise COMError on property access; treat them
+            # as non-matches so the search keeps going instead of failing.
+            try:
+                return _compare_fields(ctrl)
+            except Exception:
+                return False
+
+        def _compare_fields(ctrl: Any) -> bool:
             if name is not None:
                 if use_wildcard:
-                    if not fnmatch.fnmatch(ctrl.Name, name):
+                    if not fnmatch.fnmatch(str(ctrl.Name or ""), name):
                         return False
                 elif ctrl.Name != name:
                     return False
@@ -261,7 +312,9 @@ def _find_window_by_pid(pid: int) -> Any:
     )
 
 
-# Control type string → integer mapping (matching Rust parse_control_type)
+# Control type string → integer mapping. Values are the official UIA
+# ControlTypeIds from UIAutomationClient.h (they also match the
+# ``uiautomation.ControlType`` enum members).
 _CONTROL_TYPE_MAP: dict[str, int] = {
     "button": 50000,
     "calendar": 50001,
@@ -283,34 +336,34 @@ _CONTROL_TYPE_MAP: dict[str, int] = {
     "statusbar": 50017,
     "tab": 50018,
     "tabitem": 50019,
-    "toolbar": 50020,
-    "tooltip": 50021,
-    "tree": 50022,
-    "treeitem": 50023,
-    "custom": 50024,
-    "group": 50025,
-    "thumb": 50026,
-    "datagrid": 50027,
-    "dataitem": 50028,
-    "document": 50029,
-    "splitbutton": 50030,
-    "window": 50031,
-    "pane": 50032,
-    "header": 50033,
-    "headeritem": 50034,
-    "table": 50035,
-    "titlebar": 50036,
-    "separator": 50037,
-    "appbar": 50038,
-    "text": 50004,  # alias for edit
+    "text": 50020,
+    "toolbar": 50021,
+    "tooltip": 50022,
+    "tree": 50023,
+    "treeitem": 50024,
+    "custom": 50025,
+    "group": 50026,
+    "thumb": 50027,
+    "datagrid": 50028,
+    "dataitem": 50029,
+    "document": 50030,
+    "splitbutton": 50031,
+    "window": 50032,
+    "pane": 50033,
+    "header": 50034,
+    "headeritem": 50035,
+    "table": 50036,
+    "titlebar": 50037,
+    "separator": 50038,
+    "semanticzoom": 50039,
+    "appbar": 50040,
 }
 
 
 def parse_control_type(s: str) -> int | None:
     """Parse a control type string into its numeric UIA identifier.
 
-    Returns ``None`` for unknown names. Case-insensitive; ``"text"`` is
-    accepted as an alias for ``"edit"``.
+    Returns ``None`` for unknown names. Case-insensitive.
     """
     return _CONTROL_TYPE_MAP.get(s.lower())
 

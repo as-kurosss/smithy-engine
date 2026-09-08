@@ -14,11 +14,17 @@ the standard answer to "разбор полётов после ошибок".
 from __future__ import annotations
 
 import json
+import logging
+import queue
+import threading
 from pathlib import Path
+from types import TracebackType
 from typing import Any, TextIO
 
 from smithy.core.events import ToolEvent
 from smithy.core.transactions import current_transaction_id
+
+logger = logging.getLogger(__name__)
 
 
 class JsonlEventLogger:
@@ -26,8 +32,9 @@ class JsonlEventLogger:
 
     The file is opened in append mode at construction, so a bot with an
     unwritable audit log fails fast in Init instead of silently losing
-    history. Call :meth:`close` (or use the logger for the whole bot
-    lifetime) to flush and release the handle.
+    history. Writes happen on a background thread — the event loop is
+    never blocked by disk I/O. Call :meth:`close` (or use the logger as
+    a context manager) to drain the queue, flush and release the handle.
 
     Args:
         path: JSONL file to append to. Missing parent directories are
@@ -47,9 +54,25 @@ class JsonlEventLogger:
         self._include_config = include_config
         self._include_result = include_result
         self._file: TextIO = self._path.open("a", encoding="utf-8")
+        self._lines: queue.Queue[str | None] = queue.Queue()
+        self._writer = threading.Thread(
+            target=self._write_loop, name="smithy-jsonl-logger", daemon=True
+        )
+        self._writer.start()
+
+    def _write_loop(self) -> None:
+        while True:
+            line = self._lines.get()
+            if line is None:
+                return
+            try:
+                self._file.write(line)
+                self._file.flush()
+            except Exception:
+                logger.exception("audit log write to %s failed", self._path)
 
     async def __call__(self, event: ToolEvent) -> ToolEvent | None:
-        """Append *event* to the log and pass it down the pipeline."""
+        """Enqueue *event* for writing and pass it down the pipeline."""
         error = event.error
         record: dict[str, Any] = {
             "ts": event.timestamp.isoformat(),
@@ -64,10 +87,22 @@ class JsonlEventLogger:
             record["config"] = event.config
         if self._include_result:
             record["result"] = event.result
-        self._file.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
-        self._file.flush()
+        self._lines.put_nowait(json.dumps(record, ensure_ascii=False, default=str) + "\n")
         return event
 
     def close(self) -> None:
-        """Flush and close the underlying file."""
+        """Drain pending writes, flush and close the underlying file."""
+        self._lines.put(None)
+        self._writer.join(timeout=5.0)
         self._file.close()
+
+    def __enter__(self) -> JsonlEventLogger:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        self.close()

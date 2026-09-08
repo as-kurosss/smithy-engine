@@ -254,6 +254,13 @@ class _ListenerGroup:
         for listener in self._listeners:
             listener.stop()
 
+    def __enter__(self) -> _ListenerGroup:
+        self.start()
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        self.stop()
+
 
 # ── Clipboard helper ─────────────────────────────────────────────────────────
 
@@ -361,37 +368,36 @@ def run_single_mode(
     logger.info("Place cursor over a UI element and press CTRL to capture. Press ESC to cancel.")
 
     events: queue.Queue[SharedEvent] = queue.Queue()
-    kb = _shared_listener(events)
-    _ListenerGroup([kb]).start()
-
-    logger.info("Waiting for CTRL...")
 
     selector: BestSelector | None = None
     path: list[PathNode] | None = None
 
-    while True:
-        try:
-            event = events.get(timeout=0.1)
-        except queue.Empty:
-            continue
+    with _ListenerGroup([_shared_listener(events)]):
+        logger.info("Waiting for CTRL...")
 
-        if event.kind == "stop":
-            break
-        if event.kind == "escape":
-            logger.info("Cancelled.")
-            return
-        if event.kind == "trigger":
+        while True:
             try:
-                from pynput.mouse import Controller as MouseCtrl
-
-                mouse = MouseCtrl()
-                x, y = mouse.position
-                path, sel = capture_at_point(float(x), float(y))
-                selector = sel
-                break
-            except Exception:
-                logger.exception("Capture failed")
+                event = events.get(timeout=0.1)
+            except queue.Empty:
                 continue
+
+            if event.kind == "stop":
+                break
+            if event.kind == "escape":
+                logger.info("Cancelled.")
+                return
+            if event.kind == "trigger":
+                try:
+                    from pynput.mouse import Controller as MouseCtrl
+
+                    mouse = MouseCtrl()
+                    x, y = mouse.position
+                    path, sel = capture_at_point(float(x), float(y))
+                    selector = sel
+                    break
+                except Exception:
+                    logger.exception("Capture failed")
+                    continue
 
     if selector is None:
         logger.info("Cancelled.")
@@ -448,53 +454,51 @@ def run_series_mode(output: str) -> None:
     logger.info("Press Ctrl+Shift+F2 to stop recording")
 
     events: queue.Queue[SeriesEvent] = queue.Queue()
-    kb = _series_listener(events)
-    ms = _mouse_listener(events)
-    _ListenerGroup([kb, ms]).start()
 
     nodes: list[FlowNode] = []
     pending_input = False
     last_selector: BestSelector | None = None
     last_path: list[dict[str, Any]] = []
 
-    while True:
-        try:
-            event = events.get(timeout=0.1)
-        except queue.Empty:
-            continue
-
-        if event.kind == "stop":
-            # Flush pending text input before stopping.
-            if pending_input and last_selector is not None:
-                nodes.extend(_input_text_nodes(last_selector, last_path))
-            break
-
-        if event.kind == "mouse_down":
-            # Flush pending input before handling click.
-            if pending_input and last_selector is not None:
-                nodes.extend(_input_text_nodes(last_selector, last_path))
-            pending_input = False
-
+    with _ListenerGroup([_series_listener(events), _mouse_listener(events)]):
+        while True:
             try:
-                from pynput.mouse import Controller as MouseCtrl
+                event = events.get(timeout=0.1)
+            except queue.Empty:
+                continue
 
-                mouse = MouseCtrl()
-                x, y = mouse.position
-                path, sel = capture_at_point(float(x), float(y))
-                params = GenerateParams()
-                path_dicts = path_to_dicts(path) if path else []
-                new_nodes = [
-                    FlowNode(tool=n.tool, args=n.args, full_path=path_dicts)
-                    for n in generate_nodes(sel, ToolType.CLICK, params)
-                ]
-                nodes.extend(new_nodes)
-                last_selector = sel
-                last_path = path_dicts
-            except Exception:
-                logger.exception("Could not capture element at mouse position")
+            if event.kind == "stop":
+                # Flush pending text input before stopping.
+                if pending_input and last_selector is not None:
+                    nodes.extend(_input_text_nodes(last_selector, last_path))
+                break
 
-        elif event.kind == "input":
-            pending_input = True
+            if event.kind == "mouse_down":
+                # Flush pending input before handling click.
+                if pending_input and last_selector is not None:
+                    nodes.extend(_input_text_nodes(last_selector, last_path))
+                pending_input = False
+
+                try:
+                    from pynput.mouse import Controller as MouseCtrl
+
+                    mouse = MouseCtrl()
+                    x, y = mouse.position
+                    path, sel = capture_at_point(float(x), float(y))
+                    params = GenerateParams()
+                    path_dicts = path_to_dicts(path) if path else []
+                    new_nodes = [
+                        FlowNode(tool=n.tool, args=n.args, full_path=path_dicts)
+                        for n in generate_nodes(sel, ToolType.CLICK, params)
+                    ]
+                    nodes.extend(new_nodes)
+                    last_selector = sel
+                    last_path = path_dicts
+                except Exception:
+                    logger.exception("Could not capture element at mouse position")
+
+            elif event.kind == "input":
+                pending_input = True
 
     logger.info("Recording stopped — %d nodes generated", len(nodes))
 
@@ -524,85 +528,84 @@ def run_record_mode(output: str) -> None:
     logger.info("  Ctrl+Shift+F2 -> finish and save")
 
     events: queue.Queue[SharedEvent] = queue.Queue()
-    kb = _shared_listener(events)
-    _ListenerGroup([kb]).start()
 
     nodes: list[FlowNode] = []
     el_counter = 0
 
-    logger.info("Ready. Press CTRL over a UI element...")
+    with _ListenerGroup([_shared_listener(events)]):
+        logger.info("Ready. Press CTRL over a UI element...")
 
-    while True:
-        try:
-            event = events.get(timeout=0.1)
-        except queue.Empty:
-            continue
-
-        if event.kind == "stop":
-            break
-
-        if event.kind == "escape":
-            if not nodes:
-                logger.info("Discarded — no captures taken.")
-                return
-            # Remove the last node.
-            removed = max(0, len(nodes) - 1)
-            count = len(nodes) - removed
-            nodes = nodes[:removed]
-            logger.info(
-                "Discarded capture #%d (%d nodes removed)",
-                el_counter,
-                count,
-            )
-            el_counter = max(0, el_counter - 1)
-            continue
-
-        if event.kind == "trigger":
+        while True:
             try:
-                from pynput.mouse import Controller as MouseCtrl
-
-                mouse = MouseCtrl()
-                x, y = mouse.position
-                path, sel = capture_at_point(float(x), float(y))
-            except Exception:
-                logger.exception("Capture failed")
-                logger.info("[CTRL] continue...")
+                event = events.get(timeout=0.1)
+            except queue.Empty:
                 continue
 
-            el_counter += 1
-            label = sel.label()
-            extra = _extra_info(sel)
+            if event.kind == "stop":
+                break
 
-            logger.info("--- Capture #%d ---", el_counter)
-            logger.info("  %s%s", label, extra)
-
-            # Rank the selector (Playwright-codegen equivalent): minimal
-            # fields + uniqueness check + confidence. Falls back to the
-            # all-fields dump when ranking fails (e.g. UIA walk error).
-            ranked = _rank_captured(sel)
-            _log_ranked(ranked, sel)
-
-            # Prompt for tool type.
-            tool = _prompt_tool_type()
-
-            # Prompt for parameters.
-            params = GenerateParams()
-            if tool.needs_text:
-                params = GenerateParams(text=_prompt_text())
-            if tool.needs_duration:
-                params = GenerateParams(duration_ms=_prompt_duration())
-
-            # Generate nodes (same shape as single mode).
-            new_nodes = _nodes_for_capture(sel, path, tool, params, ranked)
-            for node in new_nodes:
+            if event.kind == "escape":
+                if not nodes:
+                    logger.info("Discarded — no captures taken.")
+                    return
+                # Remove the last node.
+                removed = max(0, len(nodes) - 1)
+                count = len(nodes) - removed
+                nodes = nodes[:removed]
                 logger.info(
-                    "    -> %s: %s",
-                    node.tool,
-                    json.dumps(node.args, ensure_ascii=False),
+                    "Discarded capture #%d (%d nodes removed)",
+                    el_counter,
+                    count,
                 )
-            nodes.extend(new_nodes)
+                el_counter = max(0, el_counter - 1)
+                continue
 
-            logger.info("[CTRL] continue  [ESC] discard  [Ctrl+Shift+F2] finish...")
+            if event.kind == "trigger":
+                try:
+                    from pynput.mouse import Controller as MouseCtrl
+
+                    mouse = MouseCtrl()
+                    x, y = mouse.position
+                    path, sel = capture_at_point(float(x), float(y))
+                except Exception:
+                    logger.exception("Capture failed")
+                    logger.info("[CTRL] continue...")
+                    continue
+
+                el_counter += 1
+                label = sel.label()
+                extra = _extra_info(sel)
+
+                logger.info("--- Capture #%d ---", el_counter)
+                logger.info("  %s%s", label, extra)
+
+                # Rank the selector (Playwright-codegen equivalent): minimal
+                # fields + uniqueness check + confidence. Falls back to the
+                # all-fields dump when ranking fails (e.g. UIA walk error).
+                ranked = _rank_captured(sel)
+                _log_ranked(ranked, sel)
+
+                # Prompt for tool type.
+                tool = _prompt_tool_type()
+
+                # Prompt for parameters.
+                params = GenerateParams()
+                if tool.needs_text:
+                    params = GenerateParams(text=_prompt_text())
+                if tool.needs_duration:
+                    params = GenerateParams(duration_ms=_prompt_duration())
+
+                # Generate nodes (same shape as single mode).
+                new_nodes = _nodes_for_capture(sel, path, tool, params, ranked)
+                for node in new_nodes:
+                    logger.info(
+                        "    -> %s: %s",
+                        node.tool,
+                        json.dumps(node.args, ensure_ascii=False),
+                    )
+                nodes.extend(new_nodes)
+
+                logger.info("[CTRL] continue  [ESC] discard  [Ctrl+Shift+F2] finish...")
 
     if not nodes:
         logger.info("No captures taken.")

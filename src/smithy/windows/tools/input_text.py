@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from smithy.core.blocking import run_blocking
-from smithy.core.errors import InvalidInput
+from smithy.core.errors import InvalidInput, PlatformError
 from smithy.core.tool import AbstractTool
 from smithy.windows.tools._resolve import resolve_element
 
@@ -71,7 +71,17 @@ class InputTextTool(AbstractTool):
 
         element = await resolve_element(config)
         if element is not None:
-            await run_blocking(element.SetFocus)
+            try:
+                await run_blocking(element.SetFocus)
+            except (InvalidInput, PlatformError):
+                raise
+            except Exception as exc:
+                raise PlatformError(f"SetFocus failed before typing: {exc}", source=exc) from exc
 
-        await run_blocking(_send, raw)
+        try:
+            await run_blocking(_send, raw)
+        except (InvalidInput, PlatformError):
+            raise
+        except Exception as exc:
+            raise PlatformError(f"SendKeys failed: {exc}", source=exc) from exc
         return {"status": "sent", "text": raw}

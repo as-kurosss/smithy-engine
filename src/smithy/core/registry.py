@@ -24,10 +24,18 @@ class ToolRegistry:
 
         Re-registering an existing name overwrites the previous tool
         and emits a ``UserWarning`` so silent replacement is explicit.
+        A tool whose ``schema()`` returns an empty dict also emits a
+        ``UserWarning`` — input validation is silently disabled for it.
         """
         if tool.name in self._tools:
             warnings.warn(
                 f"Tool {tool.name!r} is already registered and will be overwritten",
+                UserWarning,
+                stacklevel=2,
+            )
+        if not tool.schema():
+            warnings.warn(
+                f"Tool {tool.name!r} returns an empty schema(); input validation is disabled",
                 UserWarning,
                 stacklevel=2,
             )

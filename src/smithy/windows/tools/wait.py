@@ -8,7 +8,7 @@ from typing import Any
 from smithy.core.blocking import run_blocking
 from smithy.core.errors import ElementNotFound, InvalidInput, PlatformError
 from smithy.core.tool import AbstractTool
-from smithy.windows.selector import ElementSelector, parse_control_type
+from smithy.windows.selector import ElementSelector
 
 
 class WaitTool(AbstractTool):
@@ -109,34 +109,21 @@ class WaitTool(AbstractTool):
                 input_value=wait_for,
             )
 
-        if "control_type" in config:
-            raw_ct = config["control_type"]
-            if not isinstance(raw_ct, str) or parse_control_type(raw_ct) is None:
-                raise InvalidInput(
-                    f"Unknown control_type: {raw_ct!r}",
-                    param="control_type",
-                    input_value=raw_ct,
-                )
-        selector = ElementSelector()
-        if "name" in config:
-            selector = selector.with_name(config["name"])
-        if "automation_id" in config:
-            selector = selector.with_automation_id(config["automation_id"])
-        if "control_type" in config:
-            selector = selector.with_control_type(config["control_type"])
-        if "class_name" in config:
-            selector = selector.with_class_name(config["class_name"])
-        if "pid" in config:
-            selector = selector.with_pid(config["pid"])
+        selector = ElementSelector.from_config(config)
+        if selector is None:
+            selector = ElementSelector()
 
         deadline = asyncio.get_running_loop().time() + (timeout_ms / 1000)
         interval = interval_ms / 1000
+        ever_resolved = False
         while True:
             try:
                 await run_blocking(selector.find_from_desktop)
                 missing = False
+                ever_resolved = True
             except ElementNotFound:
                 missing = True
+                ever_resolved = True
             except PlatformError:
                 # Transient UIA hiccup — keep polling as if still present.
                 missing = False
@@ -145,6 +132,12 @@ class WaitTool(AbstractTool):
                 return True
 
             if asyncio.get_running_loop().time() >= deadline:
+                if not ever_resolved:
+                    raise PlatformError(
+                        "UIA queries never succeeded during wait — "
+                        "cannot tell whether the element appeared "
+                        "(check COM init / platform health)"
+                    )
                 return False
 
             await asyncio.sleep(interval)

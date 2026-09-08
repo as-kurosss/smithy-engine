@@ -18,13 +18,14 @@ from smithy.core.tool import AbstractTool
 ENV_ALLOWLIST_VAR = "SMITHY_ALLOWED_COMMANDS"
 
 # Default allowlist of executables (case-insensitive).
-# cmd.exe and powershell.exe intentionally excluded (arbitrary command execution).
+# cmd.exe, powershell.exe and explorer.exe are intentionally excluded:
+# explorer.exe accepts arbitrary launch targets as arguments, which turns
+# it into an arbitrary-code-execution vector.
 _DEFAULT_ALLOWED_COMMANDS: frozenset[str] = frozenset(
     {
         "notepad.exe",
         "calc.exe",
         "mspaint.exe",
-        "explorer.exe",
         "write.exe",
         "wordpad.exe",
     }
@@ -50,8 +51,37 @@ def _default_allowed_commands() -> frozenset[str]:
 
 
 def _is_command_allowed(cmd: str, allowed: frozenset[str]) -> bool:
-    """Check if the executable is in the allowlist."""
-    return os.path.basename(cmd).lower() in allowed
+    """Check if the executable is in the allowlist (Windows path semantics)."""
+    return PureWindowsPath(cmd.strip()).name.lower() in allowed
+
+
+def _resolve_command_path(command: str) -> str:
+    """Resolve a bare command name to an absolute path via ``PATH``.
+
+    ``CreateProcess`` searches the current directory before ``PATH`` for
+    bare names, so a planted ``notepad.exe`` in the working directory
+    would shadow the system one. Resolving explicitly (and refusing when
+    the name is not on ``PATH``) closes that hole.
+
+    Raises:
+        InvalidInput: If the bare name is not found on ``PATH``.
+    """
+    if "\\" in command or "/" in command:
+        return command
+    pathext = os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(";")
+    exts = [""] if any(command.lower().endswith(ext.lower()) for ext in pathext) else pathext
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        if not directory:
+            continue
+        for ext in exts:
+            candidate = os.path.join(directory, command + ext)
+            if os.path.isfile(candidate):
+                return candidate
+    raise InvalidInput(
+        f"Command '{command}' not found on PATH",
+        param="command",
+        input_value=command,
+    )
 
 
 class ProcessTool(AbstractTool):
@@ -168,8 +198,9 @@ async def _action_start(
         )
 
     def _start() -> int:
+        resolved = _resolve_command_path(command)
         proc = subprocess.Popen(
-            [command, *args],
+            [resolved, *args],
             cwd=working_dir,
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
         )

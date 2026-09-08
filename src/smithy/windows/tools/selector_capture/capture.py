@@ -14,8 +14,8 @@ from typing import Any
 
 try:
     import uiautomation as auto
-except Exception:  # pragma: no cover — optional Windows backend
-    auto = None  # type: ignore[assignment]
+except Exception:  # pragma: no cover - optional Windows backend
+    auto: Any = None  # noqa: PGH003 - Any fallback keeps module importable
 
 from smithy.core.errors import PlatformError
 

@@ -218,7 +218,7 @@ editor, fill in the TODOs, run.
 
 ## Visual Editor
 
-The flow is built in [smithy-designer](https://github.com/as-kurosss/smithy-core-designer) —
+The flow is built in [smithy-designer](https://github.com/as-kurosss/smithy-engine-designer) —
 a separate visual editor (MIT): drag-and-drop canvas, step debugger with
 breakpoints, XML-like selectors, typed variables.
 

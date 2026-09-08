@@ -10,12 +10,12 @@ import logging
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 try:
     import uiautomation as auto
 except Exception:  # pragma: no cover - optional Windows backend
-    auto: Any = None  # noqa: PGH003 - Any fallback keeps module importable
+    auto = cast(Any, None)  # fallback keeps the module importable off-Windows
 
 from smithy.core.errors import PlatformError
 

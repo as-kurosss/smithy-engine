@@ -35,7 +35,7 @@ from smithy.core.transactions import (
 )
 from smithy.facade import ClickResult, ProcessHandle, Smithy
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 __all__ = [
     "AbstractTool",

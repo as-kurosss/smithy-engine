@@ -259,6 +259,35 @@ Example:
 }
 ```
 
+### Running a flow
+
+```bash
+python -m smithy.run_flow flow.json --set name=value   # exit 0 = finished
+```
+
+Or programmatically: `smithy.flow.FlowRunner(registry).run(doc)`.
+
+### Process bundle contract
+
+A flow runs unattended on any orchestrator/agent as a plain Python bundle:
+
+```text
+files:        { "flow.json": <v2 doc>, "main.py": <runner shim> }
+entry_point:  main.py
+requirements: ["smithy-engine[windows]>=0.7"]
+```
+
+with the shim being two lines:
+
+```python
+from smithy.run_flow import main
+sys.exit(main(["flow.json"]))
+```
+
+The agent executes it exactly like any other Python program — no orchestrator
+changes are needed. `python -m smithy_designer.publish flow.web.json --url
+<cloud> --token sct_...` builds and uploads this bundle for you.
+
 ## Install
 
 ```bash

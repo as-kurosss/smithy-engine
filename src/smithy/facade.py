@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 from smithy.core.assets import AssetProvider, EnvAssetProvider
+from smithy.core.errors import ElementNotFound, InvalidInput
 from smithy.core.events import EventBus, Middleware, ToolEvent
 from smithy.core.registry import ToolRegistry
+from smithy.core.selectors import SelectorStore
 from smithy.core.tool import Tool
 
 
@@ -61,10 +65,21 @@ class Smithy:
         *,
         tools: list[Tool] | None = None,
         assets: AssetProvider | None = None,
+        selector_store: str | Path | None = None,
+        dev_capture: bool | None = None,
     ) -> None:
         self._registry = ToolRegistry()
         self._event_bus = EventBus()
         self._assets: AssetProvider = assets if assets is not None else EnvAssetProvider()
+        self._selector_store_path = selector_store
+        self._selector_store: SelectorStore | None = None
+        if dev_capture is None:
+            dev_capture = os.environ.get("SMITHY_DEV_CAPTURE", "").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+            )
+        self._dev_capture = dev_capture
         if tools:
             for t in tools:
                 self._registry.register(t)
@@ -120,6 +135,61 @@ class Smithy:
             await self._event_bus.emit(event)
         return result
 
+    def _store(self) -> SelectorStore:
+        """Lazily create the selector store (default ``selectors.json``)."""
+        if self._selector_store is None:
+            self._selector_store = SelectorStore(self._selector_store_path or "selectors.json")
+        return self._selector_store
+
+    async def _keyed_config(self, key: str | None, base: dict[str, Any]) -> dict[str, Any]:
+        """Fill selector fields for *key* into *base*.
+
+        A stored selector is merged with setdefault semantics — explicit
+        fields always win. A missing key in dev mode triggers an
+        interactive capture; in production it is a hard error.
+        """
+        if key is None:
+            return base
+        entry = self._store().get(key)
+        if entry is not None:
+            for field_name, value in entry.items():
+                base.setdefault(field_name, value)
+            return base
+        if not self._dev_capture:
+            raise InvalidInput(
+                f"No selector stored for key {key!r} in {self._store().path} — enable "
+                "dev capture (SMITHY_DEV_CAPTURE=1) to record it, or pass "
+                "selector fields explicitly"
+            )
+        from smithy.windows.tools.selector_capture import capture_once_async
+
+        captured = await capture_once_async()
+        self._store().put(key, captured.selector)
+        base.update(captured.selector)
+        return base
+
+    async def _execute_keyed(self, tool_name: str, config: dict[str, Any], key: str | None) -> Any:
+        """Execute a keyed selector tool; re-capture on a stale selector.
+
+        In dev mode, ``ElementNotFound`` (the stored selector no longer
+        matches the UI) prompts a fresh capture, persists it, and retries
+        once. Production runs never re-capture — a stale selector fails
+        honestly.
+        """
+        try:
+            return await self._execute(tool_name, config)
+        except ElementNotFound:
+            if key is None or not self._dev_capture:
+                raise
+            from smithy.windows.tools.selector_capture import capture_once_async
+
+            captured = await capture_once_async()
+            self._store().put(key, captured.selector)
+            for field_name in ("name", "automation_id", "control_type", "class_name"):
+                config.pop(field_name, None)
+            config.update(captured.selector)
+            return await self._execute(tool_name, config)
+
     async def process_run(self, command: str, **kwargs: Any) -> ProcessHandle:
         """Launch a process and return a handle with PID.
 
@@ -173,6 +243,7 @@ class Smithy:
         clicks: int = 1,
         x: int | None = None,
         y: int | None = None,
+        key: str | None = None,
         **kwargs: Any,
     ) -> ClickResult:
         """Click a UI element or screen coordinates.
@@ -187,6 +258,7 @@ class Smithy:
             clicks: Click count — ``1`` (default) or ``2`` (double-click).
             x: Screen X coordinate (with *y* clicks a raw point).
             y: Screen Y coordinate (with *x* clicks a raw point).
+            key: Selector-store key (dev-capture workflow).
             **kwargs: Selector fields (name, automation_id, etc.) or
                 "element" key for a pre-resolved element.
 
@@ -195,12 +267,12 @@ class Smithy:
         """
         if handle is not None:
             kwargs.setdefault("pid", handle.pid)
-        config: dict[str, Any] = {"button": button, "clicks": clicks, **kwargs}
+        config = await self._keyed_config(key, {"button": button, "clicks": clicks, **kwargs})
         if x is not None:
             config["x"] = x
         if y is not None:
             config["y"] = y
-        result = await self._execute("windows.click", config)
+        result = await self._execute_keyed("windows.click", config, key)
         return ClickResult(status=result.get("status", "clicked"))
 
     async def wait(
@@ -215,6 +287,7 @@ class Smithy:
         timeout_ms: int = 10000,
         interval_ms: int = 500,
         wait_for: str = "appear",
+        key: str | None = None,
     ) -> bool:
         """Wait for a UI element to appear or disappear.
 
@@ -231,11 +304,16 @@ class Smithy:
             timeout_ms: Maximum wait time in milliseconds.
             interval_ms: Polling interval in milliseconds.
             wait_for: ``"appear"`` (default) or ``"disappear"``.
+            key: Selector-store key (dev-capture workflow).
 
         Returns:
             ``True`` if the condition held in time, ``False`` otherwise.
         """
-        config: dict[str, Any] = {}
+        config: dict[str, Any] = {
+            "timeout_ms": timeout_ms,
+            "interval_ms": interval_ms,
+            "wait_for": wait_for,
+        }
         if handle is not None:
             config["pid"] = handle.pid
         if name is not None:
@@ -248,9 +326,7 @@ class Smithy:
             config["class_name"] = class_name
         if pid is not None:
             config["pid"] = pid
-        config["timeout_ms"] = timeout_ms
-        config["interval_ms"] = interval_ms
-        config["wait_for"] = wait_for
+        config = await self._keyed_config(key, config)
         result = await self._execute("windows.wait", config)
         return bool(result)
 
@@ -296,6 +372,7 @@ class Smithy:
         handle: _SupportsPid | None = None,
         *,
         text: str,
+        key: str | None = None,
         **kwargs: Any,
     ) -> InputTextResult:
         """Type plain text into a UI element or the focused window.
@@ -306,6 +383,7 @@ class Smithy:
         Args:
             handle: ProcessHandle to scope element search by PID.
             text: Plain text to type.
+            key: Selector-store key (dev-capture workflow).
             **kwargs: ``element_key`` or selector fields (name,
                 automation_id, control_type, class_name, pid).
 
@@ -314,7 +392,8 @@ class Smithy:
         """
         if handle is not None:
             kwargs.setdefault("pid", handle.pid)
-        result = await self._execute("windows.input_text", {"text": text, **kwargs})
+        config = await self._keyed_config(key, {"text": text, **kwargs})
+        result = await self._execute_keyed("windows.input_text", config, key)
         return InputTextResult(status=result.get("status", "typed"))
 
     async def keyboard(
@@ -351,6 +430,7 @@ class Smithy:
         handle: _SupportsPid | None = None,
         *,
         text: str,
+        key: str | None = None,
         **kwargs: Any,
     ) -> SetTextResult:
         """Replace the entire text of a UI element via UIA ValuePattern.
@@ -358,6 +438,7 @@ class Smithy:
         Args:
             handle: ProcessHandle to scope element search by PID.
             text: Text to set.
+            key: Selector-store key (dev-capture workflow).
             **kwargs: ``element_key`` or selector fields (name,
                 automation_id, control_type, class_name, pid).
 
@@ -366,18 +447,22 @@ class Smithy:
         """
         if handle is not None:
             kwargs.setdefault("pid", handle.pid)
-        result = await self._execute("windows.set_text", {"text": text, **kwargs})
+        config = await self._keyed_config(key, {"text": text, **kwargs})
+        result = await self._execute_keyed("windows.set_text", config, key)
         return SetTextResult(status=result.get("status", "set"))
 
     async def get_element(
         self,
         handle: _SupportsPid | None = None,
+        *,
+        key: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Read a UI element's attributes.
 
         Args:
             handle: ProcessHandle to scope element search by PID.
+            key: Selector-store key (dev-capture workflow).
             **kwargs: ``element_key`` or selector fields (name,
                 automation_id, control_type, class_name, pid).
 
@@ -387,7 +472,8 @@ class Smithy:
         """
         if handle is not None:
             kwargs.setdefault("pid", handle.pid)
-        out: dict[str, Any] = await self._execute("windows.get_element", kwargs)
+        config = await self._keyed_config(key, dict(kwargs))
+        out: dict[str, Any] = await self._execute_keyed("windows.get_element", config, key)
         return out
 
     async def scroll(
@@ -420,12 +506,15 @@ class Smithy:
     async def hover(
         self,
         handle: _SupportsPid | None = None,
+        *,
+        key: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Move the mouse over a UI element (opens tooltips/menus).
 
         Args:
             handle: ProcessHandle to scope element search by PID.
+            key: Selector-store key (dev-capture workflow).
             **kwargs: Selector fields (name, automation_id, etc.).
 
         Returns:
@@ -433,18 +522,22 @@ class Smithy:
         """
         if handle is not None:
             kwargs.setdefault("pid", handle.pid)
-        out: dict[str, Any] = await self._execute("windows.hover", kwargs)
+        config = await self._keyed_config(key, dict(kwargs))
+        out: dict[str, Any] = await self._execute_keyed("windows.hover", config, key)
         return out
 
     async def exists(
         self,
         handle: _SupportsPid | None = None,
+        *,
+        key: str | None = None,
         **kwargs: Any,
     ) -> bool:
         """Check whether a UI element exists right now.
 
         Args:
             handle: ProcessHandle to scope element search by PID.
+            key: Selector-store key (dev-capture workflow).
             **kwargs: Selector fields (name, automation_id, etc.).
 
         Returns:
@@ -452,18 +545,22 @@ class Smithy:
         """
         if handle is not None:
             kwargs.setdefault("pid", handle.pid)
-        result = await self._execute("windows.exists", kwargs)
+        config = await self._keyed_config(key, dict(kwargs))
+        result = await self._execute("windows.exists", config)
         return bool(result)
 
     async def get_text(
         self,
         handle: _SupportsPid | None = None,
+        *,
+        key: str | None = None,
         **kwargs: Any,
     ) -> str:
         """Read the visible text of a UI element.
 
         Args:
             handle: ProcessHandle to scope element search by PID.
+            key: Selector-store key (dev-capture workflow).
             **kwargs: Selector fields (name, automation_id, etc.).
 
         Returns:
@@ -471,7 +568,8 @@ class Smithy:
         """
         if handle is not None:
             kwargs.setdefault("pid", handle.pid)
-        result = await self._execute("windows.get_text", kwargs)
+        config = await self._keyed_config(key, dict(kwargs))
+        result = await self._execute_keyed("windows.get_text", config, key)
         if isinstance(result, dict):
             return str(result.get("text", ""))
         return str(result)
@@ -641,6 +739,7 @@ class Smithy:
         *,
         color: str = "red",
         duration_ms: int = 1000,
+        key: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Flash a colored rectangle around an element for debugging.
@@ -649,6 +748,7 @@ class Smithy:
             handle: ProcessHandle to scope element search by PID.
             color: ``"red"`` (default), ``"green"``, ``"blue"``, ``"yellow"``.
             duration_ms: How long to show the rectangle.
+            key: Selector-store key (dev-capture workflow).
             **kwargs: Selector fields (name, automation_id, etc.).
 
         Returns:
@@ -656,10 +756,10 @@ class Smithy:
         """
         if handle is not None:
             kwargs.setdefault("pid", handle.pid)
-        out: dict[str, Any] = await self._execute(
-            "windows.highlight",
-            {"color": color, "duration_ms": duration_ms, **kwargs},
+        config = await self._keyed_config(
+            key, {"color": color, "duration_ms": duration_ms, **kwargs}
         )
+        out: dict[str, Any] = await self._execute_keyed("windows.highlight", config, key)
         return out
 
     async def get_table(
@@ -667,6 +767,7 @@ class Smithy:
         handle: _SupportsPid | None = None,
         *,
         max_rows: int = 100,
+        key: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Extract rows of a table/list/grid element as JSON.
@@ -674,6 +775,7 @@ class Smithy:
         Args:
             handle: ProcessHandle to scope element search by PID.
             max_rows: Max data rows to extract.
+            key: Selector-store key (dev-capture workflow).
             **kwargs: Selector fields for the table container.
 
         Returns:
@@ -681,9 +783,8 @@ class Smithy:
         """
         if handle is not None:
             kwargs.setdefault("pid", handle.pid)
-        out: dict[str, Any] = await self._execute(
-            "windows.get_table", {"max_rows": max_rows, **kwargs}
-        )
+        config = await self._keyed_config(key, {"max_rows": max_rows, **kwargs})
+        out: dict[str, Any] = await self._execute_keyed("windows.get_table", config, key)
         return out
 
     async def control_action(
@@ -691,6 +792,7 @@ class Smithy:
         handle: _SupportsPid | None = None,
         *,
         action: str,
+        key: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Perform a native UIA pattern action (no mouse clicks).
@@ -699,6 +801,7 @@ class Smithy:
             handle: ProcessHandle to scope element search by PID.
             action: ``"invoke"``, ``"toggle"``, ``"expand"``,
                 ``"collapse"``, ``"select"``, or ``"focus"``.
+            key: Selector-store key (dev-capture workflow).
             **kwargs: Selector fields for the target element.
 
         Returns:
@@ -707,9 +810,8 @@ class Smithy:
         """
         if handle is not None:
             kwargs.setdefault("pid", handle.pid)
-        out: dict[str, Any] = await self._execute(
-            "windows.control_action", {"action": action, **kwargs}
-        )
+        config = await self._keyed_config(key, {"action": action, **kwargs})
+        out: dict[str, Any] = await self._execute_keyed("windows.control_action", config, key)
         return out
 
     async def process_wait(

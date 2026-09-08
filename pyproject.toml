@@ -52,6 +52,7 @@ ignore = ["TC001", "TC003"]
 [tool.ruff.lint.per-file-ignores]
 "src/smithy/core/errors.py" = ["N818"]
 "src/smithy/windows/tools/screenshot.py" = ["A002"]
+"src/smithy/windows/tools/selector_capture/api.py" = ["N818"]
 "tests/windows/test_process_lifecycle.py" = ["N802"]
 
 [tool.mypy]

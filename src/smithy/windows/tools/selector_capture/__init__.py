@@ -7,10 +7,17 @@ Public API::
         CaptureRecord,
         PathNode,
         capture_at_point,
+        capture_once,
         path_to_dicts,
     )
 """
 
+from smithy.windows.tools.selector_capture.api import (
+    CaptureCancelled,
+    CapturedSelector,
+    capture_once,
+    capture_once_async,
+)
 from smithy.windows.tools.selector_capture.capture import (
     BestSelector,
     CaptureRecord,
@@ -21,8 +28,12 @@ from smithy.windows.tools.selector_capture.capture import (
 
 __all__ = [
     "BestSelector",
+    "CapturedSelector",
+    "CaptureCancelled",
     "CaptureRecord",
     "PathNode",
     "capture_at_point",
+    "capture_once",
+    "capture_once_async",
     "path_to_dicts",
 ]

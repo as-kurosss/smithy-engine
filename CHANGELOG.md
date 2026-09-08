@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+Dev-capture workflow: record selectors from inside bot code, keyed
+selector registry, nothing re-prompts once fixed.
+
+### Added
+
+- Programmatic capture API (`smithy[capture]`):
+  `capture_once()` / `capture_once_async()` — block the script, hover
+  an element, press CTRL (ESC cancels via `CaptureCancelled`), get a
+  ranked `CapturedSelector` (selector + full_path + confidence +
+  warnings) back into your code.
+- `SelectorStore` (`smithy.core.selectors`) — key → selector registry
+  persisted as JSON (atomic writes, survives corrupt files).
+- Facade keyed selectors + dev capture:
+  `Smithy(selector_store=..., dev_capture=True)` (or env
+  `SMITHY_DEV_CAPTURE=1`) and `key=` on `click`, `wait`, `input_text`,
+  `set_text`, `get_element`, `hover`, `exists`, `get_text`,
+  `highlight`, `get_table`, `control_action`.
+  Workflow: a stored key runs silently (no re-prompting); a missing key
+  or a stale one (`ElementNotFound` mid-run) triggers one interactive
+  capture, persists it, and retries. In production (dev capture off) a
+  missing key is a hard error and a stale selector fails honestly.
+
+  ```python
+  bot = Smithy(tools=windows_tools(), dev_capture=True)
+  await bot.click(key="login.submit")   # first run: capture; then: silent
+  ```
+
+## Unreleased (production toolset)
+
 New toolset for production RPA: data extraction, native UIA patterns,
 files, Excel, image fallback, OCR and runtime secrets.
 

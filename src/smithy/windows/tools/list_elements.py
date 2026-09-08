@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
+from smithy.core.blocking import run_blocking
 from smithy.core.errors import ElementNotFound, InvalidInput
 from smithy.core.tool import AbstractTool
 from smithy.windows.tools._resolve import resolve_element
@@ -64,8 +64,7 @@ class ListElementsTool(AbstractTool):
                 param="max_items",
                 input_value=max_items,
             )
-        loop = asyncio.get_running_loop()
-        children = await loop.run_in_executor(None, element.GetChildren)
+        children = await run_blocking(element.GetChildren)
         items = [_describe(child) for child in children[:max_items]]
         return {"items": items, "count": len(items)}
 

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import subprocess
 from collections.abc import Iterable
 from typing import Any
 
+from smithy.core.blocking import run_blocking
 from smithy.core.errors import InvalidInput, PlatformError
 from smithy.core.tool import AbstractTool
 
@@ -161,7 +161,6 @@ async def _action_start(
             input_value=working_dir,
         )
 
-    loop = asyncio.get_running_loop()
 
     def _start() -> int:
         proc = subprocess.Popen(
@@ -171,7 +170,7 @@ async def _action_start(
         )
         return proc.pid
 
-    pid = await loop.run_in_executor(None, _start)
+    pid = await run_blocking(_start)
     return {"status": "started", "pid": pid}
 
 
@@ -198,7 +197,6 @@ async def _action_stop(config: dict[str, Any]) -> dict[str, Any]:
             input_value=name,
         )
 
-    loop = asyncio.get_running_loop()
 
     if pid is not None:
 
@@ -213,7 +211,7 @@ async def _action_stop(config: dict[str, Any]) -> dict[str, Any]:
                     f"taskkill for pid {pid} failed: {result.stderr}",
                 )
 
-        await loop.run_in_executor(None, _stop_by_pid)
+        await run_blocking(_stop_by_pid)
         return {"status": "stopped", "method": "pid", "pid": pid}
 
     if name is None:  # narrowed by the pid-branch above; explicit, not assert
@@ -233,5 +231,5 @@ async def _action_stop(config: dict[str, Any]) -> dict[str, Any]:
                 f"taskkill for {name} failed: {result.stderr}",
             )
 
-    await loop.run_in_executor(None, _stop_by_name)
+    await run_blocking(_stop_by_name)
     return {"status": "stopped", "method": "name", "name": name}

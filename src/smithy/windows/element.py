@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
+
+from smithy.core.blocking import run_blocking
 
 
 class SafeUIElement:
@@ -24,38 +25,31 @@ class SafeUIElement:
 
     async def click(self) -> None:
         """Click the element (runs in thread executor)."""
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self._element.Click)
+        await run_blocking(self._element.Click)
 
     async def get_name(self) -> str:
         """Get the element's name."""
-        loop = asyncio.get_running_loop()
-        return str(await loop.run_in_executor(None, self._element.Name))
+        return str(await run_blocking(self._element.Name))
 
     async def get_control_type(self) -> str:
         """Get the element's control type."""
-        loop = asyncio.get_running_loop()
-        return str(await loop.run_in_executor(None, self._element.ControlTypeName))
+        return str(await run_blocking(self._element.ControlTypeName))
 
     async def get_automation_id(self) -> str:
         """Get the element's automation ID."""
-        loop = asyncio.get_running_loop()
-        return str(await loop.run_in_executor(None, self._element.AutomationId))
+        return str(await run_blocking(self._element.AutomationId))
 
     async def get_class_name(self) -> str:
         """Get the element's class name."""
-        loop = asyncio.get_running_loop()
-        return str(await loop.run_in_executor(None, self._element.ClassName))
+        return str(await run_blocking(self._element.ClassName))
 
     async def get_pid(self) -> int:
         """Get the owning process ID."""
-        loop = asyncio.get_running_loop()
-        return int(await loop.run_in_executor(None, self._element.ProcessId))
+        return int(await run_blocking(self._element.ProcessId))
 
     async def get_rect(self) -> str:
         """Get the bounding rectangle as ``left,top,right,bottom``."""
-        loop = asyncio.get_running_loop()
-        rect = await loop.run_in_executor(None, self._element.BoundingRectangle)
+        rect = await run_blocking(self._element.BoundingRectangle)
         left = getattr(rect, "left", None)
         top = getattr(rect, "top", None)
         right = getattr(rect, "right", None)

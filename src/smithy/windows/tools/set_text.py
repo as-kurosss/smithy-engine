@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
+from smithy.core.blocking import run_blocking
 from smithy.core.errors import ElementNotFound, InvalidInput, PlatformError
 from smithy.core.tool import AbstractTool
 from smithy.windows.tools._resolve import resolve_element
@@ -79,29 +79,26 @@ class SetTextTool(AbstractTool):
                 selector=config,
             )
 
-        loop = asyncio.get_running_loop()
         last_error: Exception | None = None
 
         # 1. Try UIA IValueProvider (WPF / UWP controls).
         try:
-            pattern = await loop.run_in_executor(None, element.GetValuePattern)
+            pattern = await run_blocking(element.GetValuePattern)
             if pattern is not None:
-                await loop.run_in_executor(None, pattern.SetValue, text)
+                await run_blocking(pattern.SetValue, text)
                 return {"status": "set", "text": text, "method": "value_pattern"}
         except Exception as exc:
             last_error = exc  # element does not support ValuePattern; try fallback
 
         # 2. Try WM_SETTEXT via the element's HWND (Win32 controls).
         try:
-            hwnd: int | None = await loop.run_in_executor(
-                None,
-                getattr,
+            hwnd: int | None = await run_blocking(getattr,
                 element,
                 "NativeWindowHandle",
                 None,
             )
             if hwnd:
-                await loop.run_in_executor(None, _send_wm_settext, hwnd, text)
+                await run_blocking(_send_wm_settext, hwnd, text)
                 return {"status": "set", "text": text, "method": "wm_settext"}
         except Exception as exc:
             last_error = exc

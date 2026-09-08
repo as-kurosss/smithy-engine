@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import ctypes
 import re
 import time
 from typing import Any
 
+from smithy.core.blocking import run_blocking
 from smithy.core.errors import InvalidInput, PlatformError
 from smithy.core.tool import AbstractTool
 from smithy.windows.tools._resolve import resolve_element
@@ -248,14 +248,13 @@ class KeyboardTool(AbstractTool):
             )
 
         keys = normalize_keys(raw)
-        loop = asyncio.get_running_loop()
 
         element = await resolve_element(config)
         if element is not None:
-            await loop.run_in_executor(None, element.SetFocus)
+            await run_blocking(element.SetFocus)
 
         try:
-            await loop.run_in_executor(None, _send, keys)
+            await run_blocking(_send, keys)
         except ValueError as exc:
             raise InvalidInput(
                 f"Unknown key in {raw!r}: {exc}",

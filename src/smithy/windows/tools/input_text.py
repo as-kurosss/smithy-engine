@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
+from smithy.core.blocking import run_blocking
 from smithy.core.errors import InvalidInput
 from smithy.core.tool import AbstractTool
 from smithy.windows.tools._resolve import resolve_element
@@ -69,11 +69,10 @@ class InputTextTool(AbstractTool):
                 input_value=raw,
             )
 
-        loop = asyncio.get_running_loop()
 
         element = await resolve_element(config)
         if element is not None:
-            await loop.run_in_executor(None, element.SetFocus)
+            await run_blocking(element.SetFocus)
 
-        await loop.run_in_executor(None, _send, raw)
+        await run_blocking(_send, raw)
         return {"status": "sent", "text": raw}

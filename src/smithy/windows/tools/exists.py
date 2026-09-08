@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
+from smithy.core.blocking import run_blocking
 from smithy.core.errors import ElementNotFound, InvalidInput
 from smithy.core.tool import AbstractTool
 from smithy.windows.tools._resolve import build_selector
@@ -52,9 +52,8 @@ class ExistsTool(AbstractTool):
                 param=None,
                 input_value=config,
             )
-        loop = asyncio.get_running_loop()
         try:
-            await loop.run_in_executor(None, selector.find_from_desktop)
+            await run_blocking(selector.find_from_desktop)
         except ElementNotFound:
             return False
         return True

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 from typing import Any
 
+from smithy.core.blocking import run_blocking
 from smithy.core.errors import ElementNotFound, InvalidInput
 from smithy.windows.selector import ElementSelector, parse_control_type
 
@@ -74,8 +74,8 @@ async def resolve_point(config: dict[str, Any]) -> tuple[int, int] | None:
     element = await resolve_element(config)
     if element is None:
         return None
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, _element_center, element)
+    point: tuple[int, int] = await run_blocking(_element_center, element)
+    return point
 
 
 def _element_center(element: Any) -> tuple[int, int]:
@@ -122,9 +122,8 @@ async def resolve_element(config: dict[str, Any], *, strict: bool = False) -> An
     if selector is None:
         return None
 
-    loop = asyncio.get_running_loop()
     if strict:
-        matches = await loop.run_in_executor(None, selector.count_from_desktop, 2)
+        matches = await run_blocking(selector.count_from_desktop, 2)
         if matches == 0:
             raise ElementNotFound(
                 "No element found matching selector",
@@ -137,4 +136,4 @@ async def resolve_element(config: dict[str, Any], *, strict: bool = False) -> An
                 param=None,
                 input_value=config,
             )
-    return await loop.run_in_executor(None, selector.find_from_desktop)
+    return await run_blocking(selector.find_from_desktop)

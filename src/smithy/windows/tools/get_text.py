@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
+from smithy.core.blocking import run_blocking
 from smithy.core.errors import ElementNotFound, PlatformError
 from smithy.core.tool import AbstractTool
 from smithy.windows.tools._resolve import resolve_element
@@ -49,9 +49,8 @@ class GetTextTool(AbstractTool):
                 "(name, automation_id, control_type, class_name, pid)",
                 selector=config,
             )
-        loop = asyncio.get_running_loop()
         try:
-            text = await loop.run_in_executor(None, _read_text, element)
+            text = await run_blocking(_read_text, element)
         except Exception as exc:
             raise PlatformError(f"Reading element text failed: {exc}", source=exc) from exc
         return {"status": "read", "text": text}

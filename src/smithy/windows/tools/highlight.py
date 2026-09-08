@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
 from typing import Any
 
+from smithy.core.blocking import run_blocking
 from smithy.core.errors import ElementNotFound, InvalidInput, PlatformError
 from smithy.core.tool import AbstractTool
 from smithy.windows.tools._resolve import resolve_element
@@ -86,12 +86,10 @@ class HighlightTool(AbstractTool):
                 input_value=duration_ms,
             )
 
-        loop = asyncio.get_running_loop()
         try:
-            rect = await loop.run_in_executor(None, _bounding_rect, element)
+            rect = await run_blocking(_bounding_rect, element)
             left, top, right, bottom = rect.left, rect.top, rect.right, rect.bottom
-            await loop.run_in_executor(
-                None, _flash_rect, left, top, right, bottom, _COLORS[color], duration_ms
+            await run_blocking(_flash_rect, left, top, right, bottom, _COLORS[color], duration_ms
             )
         except (InvalidInput, ElementNotFound, PlatformError):
             raise

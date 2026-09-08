@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
+from smithy.core.blocking import run_blocking
 from smithy.core.errors import InvalidInput, PlatformError
 from smithy.core.tool import AbstractTool
 
@@ -60,12 +60,11 @@ class ClipboardTool(AbstractTool):
             text = ""
 
         clipboard = _load_pyperclip()
-        loop = asyncio.get_running_loop()
         try:
             if action == "set":
-                await loop.run_in_executor(None, clipboard.copy, text)
+                await run_blocking(clipboard.copy, text)
                 return {"status": "set"}
-            pasted = await loop.run_in_executor(None, clipboard.paste)
+            pasted = await run_blocking(clipboard.paste)
         except Exception as exc:
             raise PlatformError(f"Clipboard {action!r} failed: {exc}", source=exc) from exc
         return {"status": "read", "text": str(pasted) if pasted else ""}

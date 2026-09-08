@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
+from smithy.core.blocking import run_blocking
 from smithy.core.errors import InvalidInput, PlatformError
 from smithy.core.tool import AbstractTool
 from smithy.windows.tools._resolve import resolve_point
@@ -60,9 +60,8 @@ class DragTool(AbstractTool):
                 param=None,
                 input_value=config,
             )
-        loop = asyncio.get_running_loop()
         try:
-            await loop.run_in_executor(None, _drag_drop, start, end)
+            await run_blocking(_drag_drop, start, end)
         except Exception as exc:
             raise PlatformError(f"Drag failed: {exc}", source=exc) from exc
         return {"status": "dragged", "from": list(start), "to": list(end)}

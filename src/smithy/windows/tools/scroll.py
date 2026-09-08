@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
+from smithy.core.blocking import run_blocking
 from smithy.core.errors import InvalidInput, PlatformError
 from smithy.core.tool import AbstractTool
 from smithy.windows.tools._resolve import resolve_point
@@ -81,9 +81,8 @@ class ScrollTool(AbstractTool):
             )
 
         point = await resolve_point(config)
-        loop = asyncio.get_running_loop()
         try:
-            await loop.run_in_executor(None, _scroll_at, point, direction, wheel_clicks)
+            await run_blocking(_scroll_at, point, direction, wheel_clicks)
         except Exception as exc:
             raise PlatformError(f"Scroll failed: {exc}", source=exc) from exc
         return {"status": "scrolled", "direction": direction, "wheel_clicks": wheel_clicks}

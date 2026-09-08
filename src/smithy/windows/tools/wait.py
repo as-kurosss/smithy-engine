@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from smithy.core.blocking import run_blocking
 from smithy.core.errors import ElementNotFound, InvalidInput, PlatformError
 from smithy.core.tool import AbstractTool
 from smithy.windows.selector import ElementSelector, parse_control_type
@@ -132,7 +133,7 @@ class WaitTool(AbstractTool):
         interval = interval_ms / 1000
         while True:
             try:
-                await asyncio.get_running_loop().run_in_executor(None, selector.find_from_desktop)
+                await run_blocking(selector.find_from_desktop)
                 missing = False
             except ElementNotFound:
                 missing = True

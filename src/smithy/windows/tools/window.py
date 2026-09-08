@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
+from smithy.core.blocking import run_blocking
 from smithy.core.errors import ElementNotFound, InvalidInput, PlatformError
 from smithy.core.tool import AbstractTool
 from smithy.windows.selector import ElementSelector
@@ -86,14 +86,13 @@ class WindowTool(AbstractTool):
         if action == "move":
             geometry = _read_geometry(config)
 
-        loop = asyncio.get_running_loop()
         try:
             selector = ElementSelector().with_pid(pid)
-            control = await loop.run_in_executor(None, selector.find_from_desktop)
+            control = await run_blocking(selector.find_from_desktop)
             hwnd = getattr(control, "NativeWindowHandle", None)
             if not hwnd:
                 raise PlatformError(f"No window handle for PID {pid}")
-            await loop.run_in_executor(None, _apply_action, hwnd, action, geometry)
+            await run_blocking(_apply_action, hwnd, action, geometry)
         except (InvalidInput, ElementNotFound, PlatformError):
             raise
         except Exception as exc:

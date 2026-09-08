@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
+from smithy.core.blocking import run_blocking
 from smithy.core.errors import ElementNotFound, PlatformError
 from smithy.core.tool import AbstractTool
 from smithy.windows.tools._resolve import resolve_point
@@ -48,9 +48,8 @@ class HoverTool(AbstractTool):
                 "or coordinates ('x', 'y')",
                 selector=config,
             )
-        loop = asyncio.get_running_loop()
         try:
-            await loop.run_in_executor(None, _move_to, point[0], point[1])
+            await run_blocking(_move_to, point[0], point[1])
         except Exception as exc:
             raise PlatformError(f"Hover failed: {exc}", source=exc) from exc
         return {"status": "hovered", "x": point[0], "y": point[1]}

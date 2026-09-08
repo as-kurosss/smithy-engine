@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import ctypes
 import ctypes.wintypes  # noqa: PLC0415
 import os
 from pathlib import Path
 from typing import Any
 
+from smithy.core.blocking import run_blocking
 from smithy.core.errors import InvalidInput, PlatformError
 from smithy.core.tool import AbstractTool
 
@@ -92,12 +92,11 @@ class ScreenshotTool(AbstractTool):
                 input_value=pid,
             )
 
-        loop = asyncio.get_running_loop()
         try:
             if pid is not None:
-                saved = await loop.run_in_executor(None, _capture_window, pid, save_path, fmt)
+                saved = await run_blocking(_capture_window, pid, save_path, fmt)
             else:
-                saved = await loop.run_in_executor(None, _capture_full_screen, save_path, fmt)
+                saved = await run_blocking(_capture_full_screen, save_path, fmt)
         except ImportError as exc:
             raise PlatformError(
                 "Screenshot requires 'mss' and 'Pillow'. Install with: pip install mss Pillow",

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
+from smithy.core.blocking import run_blocking
 from smithy.core.errors import ElementNotFound, InvalidInput, PlatformError
 from smithy.core.tool import AbstractTool
 from smithy.windows.element import SafeUIElement
@@ -89,7 +89,6 @@ class ClickTool(AbstractTool):
                 input_value=clicks,
             )
 
-        loop = asyncio.get_running_loop()
         try:
             if "x" in config or "y" in config:
                 # Explicit coordinates win over selector fields.
@@ -106,7 +105,7 @@ class ClickTool(AbstractTool):
                         param="x",
                         input_value={"x": x, "y": y},
                     )
-                await loop.run_in_executor(None, _click_at, x, y, button, clicks)
+                await run_blocking(_click_at, x, y, button, clicks)
             else:
                 element = await resolve_element(config)
                 if element is None:
@@ -116,7 +115,7 @@ class ClickTool(AbstractTool):
                         "or coordinates ('x', 'y')",
                         selector=config,
                     )
-                await loop.run_in_executor(None, _click_element, element, button, clicks)
+                await run_blocking(_click_element, element, button, clicks)
         except (InvalidInput, ElementNotFound):
             raise
         except Exception as exc:

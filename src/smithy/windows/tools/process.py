@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 from collections.abc import Iterable
+from pathlib import PureWindowsPath
 from typing import Any
 
 from smithy.core.blocking import run_blocking
@@ -31,8 +32,13 @@ _DEFAULT_ALLOWED_COMMANDS: frozenset[str] = frozenset(
 
 
 def _normalize_entries(entries: Iterable[str]) -> frozenset[str]:
-    """Normalize allowlist entries to lowercase basenames."""
-    return frozenset(os.path.basename(entry.strip()).lower() for entry in entries if entry.strip())
+    """Normalize allowlist entries to lowercase basenames (Windows semantics)."""
+    # PureWindowsPath: treat backslash paths consistently on every host OS —
+    # the allowlist always targets Windows commands, even when the bot config
+    # was authored on Linux/macOS.
+    return frozenset(
+        PureWindowsPath(entry.strip()).name.lower() for entry in entries if entry.strip()
+    )
 
 
 def _default_allowed_commands() -> frozenset[str]:
@@ -161,7 +167,6 @@ async def _action_start(
             input_value=working_dir,
         )
 
-
     def _start() -> int:
         proc = subprocess.Popen(
             [command, *args],
@@ -196,7 +201,6 @@ async def _action_stop(config: dict[str, Any]) -> dict[str, Any]:
             param="name",
             input_value=name,
         )
-
 
     if pid is not None:
 

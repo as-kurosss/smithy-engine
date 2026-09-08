@@ -69,7 +69,6 @@ class InputTextTool(AbstractTool):
                 input_value=raw,
             )
 
-
         element = await resolve_element(config)
         if element is not None:
             await run_blocking(element.SetFocus)

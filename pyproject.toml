@@ -51,6 +51,8 @@ ignore = ["TC001", "TC003"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
+# the package targets Windows (ctypes.windll etc.); type-check for win32
+platform = "win32"
 
 [[tool.mypy.overrides]]
 module = ["pynput.*", "pyperclip", "mss", "PIL", "PIL.*", "uiautomation"]

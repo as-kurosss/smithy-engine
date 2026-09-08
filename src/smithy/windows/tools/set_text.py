@@ -92,7 +92,8 @@ class SetTextTool(AbstractTool):
 
         # 2. Try WM_SETTEXT via the element's HWND (Win32 controls).
         try:
-            hwnd: int | None = await run_blocking(getattr,
+            hwnd: int | None = await run_blocking(
+                getattr,
                 element,
                 "NativeWindowHandle",
                 None,

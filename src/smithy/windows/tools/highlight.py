@@ -89,8 +89,7 @@ class HighlightTool(AbstractTool):
         try:
             rect = await run_blocking(_bounding_rect, element)
             left, top, right, bottom = rect.left, rect.top, rect.right, rect.bottom
-            await run_blocking(_flash_rect, left, top, right, bottom, _COLORS[color], duration_ms
-            )
+            await run_blocking(_flash_rect, left, top, right, bottom, _COLORS[color], duration_ms)
         except (InvalidInput, ElementNotFound, PlatformError):
             raise
         except Exception as exc:

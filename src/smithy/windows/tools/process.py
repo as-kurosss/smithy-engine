@@ -116,15 +116,27 @@ class ProcessTool(AbstractTool):
         return {
             "type": "object",
             "properties": {
-                "action": {"type": "string", "enum": ["start", "stop"]},
+                "action": {
+                    "type": "string",
+                    "enum": ["start", "stop", "wait", "status"],
+                },
                 "command": {
                     "type": "string",
                     "description": "Executable path",
                 },
                 "args": {"type": "array", "items": {"type": "string"}},
                 "working_dir": {"type": "string"},
-                "pid": {"type": "integer", "description": "Process ID to stop"},
+                "pid": {
+                    "type": "integer",
+                    "description": "Process ID to stop, wait for, or query",
+                },
                 "name": {"type": "string", "description": "Process image name to stop"},
+                "timeout_ms": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 30000,
+                    "description": "Max wait for the wait action",
+                },
             },
             "required": ["action"],
         }
@@ -147,6 +159,10 @@ class ProcessTool(AbstractTool):
                 return await _action_start(config, self._allowed)
             if action == "stop":
                 return await _action_stop(config)
+            if action == "wait":
+                return await _action_wait(config)
+            if action == "status":
+                return await _action_status(config)
         except (InvalidInput, PlatformError):
             raise
         except Exception as exc:
@@ -268,3 +284,96 @@ async def _action_stop(config: dict[str, Any]) -> dict[str, Any]:
 
     await run_blocking(_stop_by_name)
     return {"status": "stopped", "method": "name", "name": name}
+
+
+def _check_pid(config: dict[str, Any]) -> int:
+    pid = config.get("pid")
+    if isinstance(pid, bool) or not isinstance(pid, int):
+        raise InvalidInput(
+            "Missing or invalid 'pid': expected an integer",
+            param="pid",
+            input_value=pid,
+        )
+    return pid
+
+
+def _check_timeout_ms(config: dict[str, Any]) -> int:
+    timeout_ms = config.get("timeout_ms", 30000)
+    if isinstance(timeout_ms, bool) or not isinstance(timeout_ms, int) or timeout_ms < 1:
+        raise InvalidInput(
+            "Invalid 'timeout_ms': expected an integer >= 1",
+            param="timeout_ms",
+            input_value=timeout_ms,
+        )
+    return timeout_ms
+
+
+_STILL_ACTIVE = 259
+_SYNCHRONIZE = 0x00100000
+_QUERY_LIMITED_INFORMATION = 0x1000
+_WAIT_OBJECT_0 = 0
+_WAIT_TIMEOUT = 0x102
+
+
+async def _action_wait(config: dict[str, Any]) -> dict[str, Any]:
+    """Wait for a process to exit and report its exit code."""
+    pid = _check_pid(config)
+    timeout_ms = _check_timeout_ms(config)
+    outcome = await run_blocking(_wait_for_exit, pid, timeout_ms)
+    if outcome is None:
+        return {"status": "timeout", "pid": pid}
+    return {"status": "exited", "pid": pid, "exit_code": outcome}
+
+
+def _wait_for_exit(pid: int, timeout_ms: int) -> int | None:
+    """Wait for *pid* to exit (runs in an executor).
+
+    Returns the exit code, or ``None`` on timeout.
+    """
+    import ctypes
+    import ctypes.wintypes
+
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(_SYNCHRONIZE, False, pid)
+    if not handle:
+        raise PlatformError(
+            f"Cannot open process {pid} for waiting (it may not exist or access is denied)"
+        )
+    try:
+        wait_result = kernel32.WaitForSingleObject(handle, ctypes.c_uint(timeout_ms))
+        if wait_result == _WAIT_TIMEOUT:
+            return None
+        if wait_result != _WAIT_OBJECT_0:
+            raise PlatformError(f"WaitForSingleObject failed for pid {pid}: {wait_result}")
+        exit_code = ctypes.wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            raise PlatformError(f"GetExitCodeProcess failed for pid {pid}")
+        return int(exit_code.value)
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+async def _action_status(config: dict[str, Any]) -> dict[str, Any]:
+    """Query whether a process is running (and its exit code when done)."""
+    pid = _check_pid(config)
+    running, exit_code = await run_blocking(_query_status, pid)
+    return {"pid": pid, "running": running, "exit_code": exit_code}
+
+
+def _query_status(pid: int) -> tuple[bool, int | None]:
+    """Read process liveness (runs in an executor)."""
+    import ctypes
+    import ctypes.wintypes
+
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return False, None
+    try:
+        exit_code = ctypes.wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            return False, None
+        code = int(exit_code.value)
+        return (code == _STILL_ACTIVE), (None if code == _STILL_ACTIVE else code)
+    finally:
+        kernel32.CloseHandle(handle)

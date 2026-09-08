@@ -29,12 +29,16 @@ def windows_tools(
             the bot may start. ``None`` means the built-in demo list (or
             the ``SMITHY_ALLOWED_COMMANDS`` env override when set).
     """
+    from smithy.core.excel import ExcelTool
+    from smithy.core.files import FileTool
     from smithy.windows.tools.click import ClickTool
     from smithy.windows.tools.clipboard import ClipboardTool
+    from smithy.windows.tools.control_action import ControlActionTool
     from smithy.windows.tools.delay import DelayTool
     from smithy.windows.tools.drag import DragTool
     from smithy.windows.tools.exists import ExistsTool
     from smithy.windows.tools.get_element import GetElementTool
+    from smithy.windows.tools.get_table import GetTableTool
     from smithy.windows.tools.get_text import GetTextTool
     from smithy.windows.tools.highlight import HighlightTool
     from smithy.windows.tools.hover import HoverTool
@@ -69,4 +73,8 @@ def windows_tools(
         ClipboardTool(),
         ListElementsTool(),
         HighlightTool(),
+        GetTableTool(),
+        ControlActionTool(),
+        FileTool(),
+        ExcelTool(),
     ]

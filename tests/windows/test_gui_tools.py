@@ -616,11 +616,11 @@ class TestHighlight:
 
 
 class TestFactoryAndFacade:
-    def test_factory_returns_19_tools(self) -> None:
+    def test_factory_returns_23_tools(self) -> None:
         from smithy.windows.tools import windows_tools
 
         tools = windows_tools()
-        assert len(tools) == 19
+        assert len(tools) == 23
         names = {t.name for t in tools}
         for expected in (
             "windows.scroll",

@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+New toolset for production RPA: data extraction, native UIA patterns,
+files, Excel, image fallback, OCR and runtime secrets.
+
+### Added
+
+- `windows.get_table` — extract DataGrid/ListView/TreeView rows as JSON
+  (columns from a header control + row arrays); works through wrapper
+  containers via bounded descent.
+- `windows.control_action` — native UIA pattern actions (`invoke`,
+  `toggle`, `expand`, `collapse`, `select`, `focus`) that keep working
+  when a window is covered or unfocused (no coordinate clicks).
+- `file` tool — `read`/`write`/`append`/`copy`/`move`/`delete`/
+  `exists`/`wait_for`/`list`; optional `SMITHY_FILE_ROOT` sandbox
+  confines every path (flow configs then cannot touch anything outside).
+- `excel` tool — `read`/`write`/`append` for xlsx via `openpyxl`
+  (new ``excel`` extra), honors the same file sandbox.
+- `windows.process` lifecycle: `wait` (bounded wait for exit + exit
+  code via Win32 `WaitForSingleObject`) and `status`
+  (`running`/`exit_code` via `GetExitCodeProcess`).
+- Image fallback for UIA-invisible UIs (Citrix/RDP/Java/canvas):
+  `windows.find_image` and `windows.click_image` via OpenCV template
+  matching (new ``image`` extra: numpy + opencv-python).
+- `windows.ocr` — text from an image file or screen region using the
+  built-in Windows OCR engine, zero extra dependencies (Windows
+  PowerShell 5.1 WinRT interop); optional `language` (BCP-47).
+- Runtime secrets: `smithy.core.assets` (`AssetProvider` protocol +
+  `EnvAssetProvider` over `SMITHY_ASSET_*`), `Smithy(assets=...)` and
+  `bot.asset("db.password")`. Values are fetched in bot code and never
+  pass through tool configs/results — they cannot leak into the JSONL
+  audit log.
+- Facade wrappers: `get_table()`, `control_action()`, `process_wait()`,
+  `process_status()`, `asset()`; `windows_tools()` now bundles
+  `get_table`, `control_action`, `file`, and `excel`.
+
+## Unreleased (audit hardening)
+
 Audit-driven hardening release: correctness, security, resource-leak and
 performance fixes across core and windows modules.
 

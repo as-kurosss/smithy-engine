@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from smithy.core.assets import AssetProvider, EnvAssetProvider
 from smithy.core.events import EventBus, Middleware, ToolEvent
 from smithy.core.registry import ToolRegistry
 from smithy.core.tool import Tool
@@ -55,12 +56,34 @@ class Smithy:
         await bot.process_stop(app)
     """
 
-    def __init__(self, *, tools: list[Tool] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        tools: list[Tool] | None = None,
+        assets: AssetProvider | None = None,
+    ) -> None:
         self._registry = ToolRegistry()
         self._event_bus = EventBus()
+        self._assets: AssetProvider = assets if assets is not None else EnvAssetProvider()
         if tools:
             for t in tools:
                 self._registry.register(t)
+
+    def asset(self, name: str) -> str:
+        """Fetch a runtime secret by reference name.
+
+        Values come from the configured :class:`AssetProvider` (by
+        default ``SMITHY_ASSET_*`` environment variables) and are
+        returned to bot code only — they never pass through tool
+        configs or results, so they cannot leak into the audit log.
+
+        Args:
+            name: Asset reference (e.g. ``"db.password"``).
+
+        Returns:
+            The secret value.
+        """
+        return self._assets.get(name)
 
     def register(self, tool: Tool) -> None:
         """Register a tool for use by this bot."""
@@ -636,6 +659,101 @@ class Smithy:
         out: dict[str, Any] = await self._execute(
             "windows.highlight",
             {"color": color, "duration_ms": duration_ms, **kwargs},
+        )
+        return out
+
+    async def get_table(
+        self,
+        handle: _SupportsPid | None = None,
+        *,
+        max_rows: int = 100,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Extract rows of a table/list/grid element as JSON.
+
+        Args:
+            handle: ProcessHandle to scope element search by PID.
+            max_rows: Max data rows to extract.
+            **kwargs: Selector fields for the table container.
+
+        Returns:
+            Dict with ``"rows"``, ``"count"`` and optional ``"columns"``.
+        """
+        if handle is not None:
+            kwargs.setdefault("pid", handle.pid)
+        out: dict[str, Any] = await self._execute(
+            "windows.get_table", {"max_rows": max_rows, **kwargs}
+        )
+        return out
+
+    async def control_action(
+        self,
+        handle: _SupportsPid | None = None,
+        *,
+        action: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Perform a native UIA pattern action (no mouse clicks).
+
+        Args:
+            handle: ProcessHandle to scope element search by PID.
+            action: ``"invoke"``, ``"toggle"``, ``"expand"``,
+                ``"collapse"``, ``"select"``, or ``"focus"``.
+            **kwargs: Selector fields for the target element.
+
+        Returns:
+            Dict with ``"status"`` and ``"action"`` (plus
+            ``"toggle_state"`` for toggles).
+        """
+        if handle is not None:
+            kwargs.setdefault("pid", handle.pid)
+        out: dict[str, Any] = await self._execute(
+            "windows.control_action", {"action": action, **kwargs}
+        )
+        return out
+
+    async def process_wait(
+        self,
+        handle: _SupportsPid | None = None,
+        *,
+        pid: int | None = None,
+        timeout_ms: int = 30000,
+    ) -> dict[str, Any]:
+        """Wait for a process to exit and report its exit code.
+
+        Args:
+            handle: ProcessHandle whose PID to wait for.
+            pid: Process ID to wait for.
+            timeout_ms: Max wait in milliseconds.
+
+        Returns:
+            Dict with ``"status"`` (``"exited"``/``"timeout"``) and
+            ``"exit_code"`` when the process exited in time.
+        """
+        resolved_pid = handle.pid if handle is not None else pid
+        out: dict[str, Any] = await self._execute(
+            "windows.process", {"action": "wait", "pid": resolved_pid, "timeout_ms": timeout_ms}
+        )
+        return out
+
+    async def process_status(
+        self,
+        handle: _SupportsPid | None = None,
+        *,
+        pid: int | None = None,
+    ) -> dict[str, Any]:
+        """Query whether a process is running (and its exit code when done).
+
+        Args:
+            handle: ProcessHandle whose PID to query.
+            pid: Process ID to query.
+
+        Returns:
+            Dict with ``"running"`` and ``"exit_code"`` keys.
+        """
+        resolved_pid = handle.pid if handle is not None else pid
+        out: dict[str, Any] = await self._execute(
+            "windows.process", {"action": "status", "pid": resolved_pid}
         )
         return out
 

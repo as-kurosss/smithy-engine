@@ -15,12 +15,17 @@ dependencies = []
 [project.optional-dependencies]
 windows = ["uiautomation>=2.0.29", "mss>=9", "Pillow>=10", "pyperclip>=1.8"]
 capture = ["pynput>=1.7", "pyperclip>=1.8"]
+image = ["mss>=9", "Pillow>=10", "numpy>=1.24", "opencv-python>=4.8"]
+excel = ["openpyxl>=3.1"]
 all = [
     "uiautomation>=2.0.29",
     "mss>=9",
     "Pillow>=10",
     "pynput>=1.7",
     "pyperclip>=1.8",
+    "numpy>=1.24",
+    "opencv-python>=4.8",
+    "openpyxl>=3.1",
 ]
 dev = [
     "pytest>=8",
@@ -47,6 +52,7 @@ ignore = ["TC001", "TC003"]
 [tool.ruff.lint.per-file-ignores]
 "src/smithy/core/errors.py" = ["N818"]
 "src/smithy/windows/tools/screenshot.py" = ["A002"]
+"tests/windows/test_process_lifecycle.py" = ["N802"]
 
 [tool.mypy]
 python_version = "3.11"
@@ -55,5 +61,5 @@ strict = true
 platform = "win32"
 
 [[tool.mypy.overrides]]
-module = ["pynput.*", "pyperclip", "mss", "PIL", "PIL.*", "uiautomation"]
+module = ["pynput.*", "pyperclip", "mss", "PIL", "PIL.*", "uiautomation", "openpyxl", "openpyxl.*", "numpy", "cv2"]
 ignore_missing_imports = true

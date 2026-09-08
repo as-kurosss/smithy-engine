@@ -15,7 +15,7 @@ from typing import Any, cast
 try:
     import uiautomation as auto
 except Exception:  # pragma: no cover - optional Windows backend
-    auto = cast(Any, None)  # fallback keeps the module importable off-Windows
+    auto = cast("Any", None)  # fallback keeps the module importable off-Windows
 
 from smithy.core.errors import PlatformError
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.0 — 2026-09-08
+
+### Added
+
+- flow-v2 executor in the engine core (`smithy.flow.FlowRunner`) and a
+  standalone runner CLI: `python -m smithy.run_flow flow.json [--set NAME=VALUE]`
+  — flows from the designer now run as plain programs (e.g. inside
+  smithy-cloud process bundles)
+- keyed element access on the facade; programmatic selector capture API
+- core/selectors.py helpers module
+
 ## Unreleased
 
 Dev-capture workflow: record selectors from inside bot code, keyed

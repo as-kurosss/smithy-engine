@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "smithy-engine"
-version = "0.8.0"
+version = "0.8.1"
 description = "Free Python RPA engine — create automation bots with simple API"
 readme = "README.md"
 license = "MIT"
@@ -62,5 +62,5 @@ strict = true
 platform = "win32"
 
 [[tool.mypy.overrides]]
-module = ["pynput.*", "pyperclip", "mss", "PIL", "PIL.*", "uiautomation", "openpyxl", "openpyxl.*", "numpy", "cv2"]
+module = ["pynput.*", "pyperclip", "mss", "PIL", "PIL.*", "uiautomation", "comtypes", "openpyxl", "openpyxl.*", "numpy", "cv2"]
 ignore_missing_imports = true

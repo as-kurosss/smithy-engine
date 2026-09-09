@@ -15,6 +15,7 @@ selector is stored and the run continues.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import queue
 from dataclasses import dataclass, field
@@ -95,11 +96,25 @@ def capture_once() -> CapturedSelector:
 
     mouse = MouseCtrl()
     x, y = mouse.position
-    path, sel = capture_at_point(float(x), float(y))
-    logger.info("Captured: %s", sel.label())
+    # UIA/comtypes COM apartments are per-thread: when this runs off the
+    # main thread (capture_once_async), initialize COM for it — regular
+    # tools get this for free because they import uiautomation inside
+    # their worker threads, but capture_at_point imports it eagerly.
+    comtypes = None
+    with contextlib.suppress(ImportError):  # pragma: no cover — Windows-only dep
+        import comtypes  # type: ignore[no-redef]
 
-    ranked = _rank_captured(sel)
-    _log_ranked(ranked, sel)
+    if comtypes is not None:
+        comtypes.CoInitialize()
+    try:
+        path, sel = capture_at_point(float(x), float(y))
+        logger.info("Captured: %s", sel.label())
+
+        ranked = _rank_captured(sel)
+        _log_ranked(ranked, sel)
+    finally:
+        if comtypes is not None:
+            comtypes.CoUninitialize()
     if ranked is not None:
         return _from_ranked(ranked, path)
     logger.warning("Ranking failed — using the unranked all-fields selector")

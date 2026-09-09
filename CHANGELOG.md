@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.1 — 2026-09-09
+
+### Fixed
+
+- **dev-capture off the main thread:** `capture_once_async()` crashed
+  with `CoInitialize` (`WinError -2147221008`) — UIA/COM apartments are
+  per-thread, and `capture_at_point` imports `uiautomation` eagerly (so
+  COM was initialized on the main thread only). Interactive capture now
+  initializes/uninitializes COM around the UIA walk, so keyed dev
+  capture (`bot.click(key=...)` + `SMITHY_DEV_CAPTURE=1`) works from
+  async bot code.
+
 ## 0.8.0 — 2026-09-09
 
 Dev → delivery pipeline: packs, tracer, transactional runs, flow hardening.

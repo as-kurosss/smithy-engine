@@ -17,11 +17,14 @@ operator token (or pre-create them server-side); workers only claim.
 from __future__ import annotations
 
 import json
+import os
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import UTC, datetime
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 from typing import Any, cast
 
 from smithy.core.errors import InfrastructureError, InvalidInput
@@ -45,6 +48,14 @@ class HttpQueueError(InfrastructureError):
 
 _RETRYABLE_STATUS: frozenset[int] = frozenset({502, 503, 504})
 _RETRY_BASE_SECONDS = 0.5
+
+
+def _engine_version() -> str | None:
+    """Installed smithy-engine version (None when not resolvable)."""
+    try:
+        return _pkg_version("smithy-engine")
+    except PackageNotFoundError:
+        return None
 
 
 def _post(
@@ -206,10 +217,20 @@ class HttpQueue:
 
     def claim(self, queue: str, *, run_id: str, lease_seconds: int = 300) -> ClaimedItem | None:
         quoted = urllib.parse.quote(queue, safe="")
+        body: dict[str, Any] = {"run_id": run_id, "lease_seconds": lease_seconds}
+        # Version stamping: the cloud records which agent/engine actually
+        # claims work (monitoring now, version routing later). Both fields
+        # are optional and ignored by servers without the feature.
+        engine = _engine_version()
+        if engine is not None:
+            body["engine_version"] = engine
+        agent_version = os.environ.get("SMITHY_AGENT_VERSION")
+        if agent_version:
+            body["agent_version"] = agent_version
         try:
             data = _post(
                 f"{self._base_url}/agents/{self._agent_id}/queues/{quoted}/claim",
-                {"run_id": run_id, "lease_seconds": lease_seconds},
+                body,
                 token=self._token,
                 timeout=self._timeout,
                 max_retries=self._max_retries,

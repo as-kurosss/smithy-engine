@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -103,6 +104,8 @@ class TestParseControlType:
         assert parse_control_type("NoSuchType") is None
 
     def test_matches_uiautomation_control_type(self) -> None:
+        if sys.platform != "win32":
+            pytest.skip("comtypes (uiautomation) imports COMError — Windows only")
         pytest.importorskip("uiautomation")
         import uiautomation as auto
 

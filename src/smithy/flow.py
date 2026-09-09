@@ -10,6 +10,20 @@ designer's debugger on top of :class:`FlowRunner`. Used standalone:
 
     runner = FlowRunner(ToolRegistry(), log=print)
     await runner.run(doc)   # raises FlowError on failure
+
+Flows are data, not code: they can be validated, allowlisted and
+distributed by the orchestrator. The runner therefore never executes
+anything but registered tools, and supports:
+
+- ``on_error`` per node: ``stop`` (default) / ``continue`` (save the
+  error into a variable and proceed) / ``retry`` (bounded retries);
+- ``key`` in tool configs — selectors from a :class:`SelectorStore`
+  (the dev-capture workflow works in flows too, via
+  ``SMITHY_DEV_CAPTURE``);
+- ``${asset:name}`` interpolation — runtime secrets via an
+  :class:`AssetProvider`; asset values are redacted from logs;
+- ``flow`` nodes — subflows (inline document or file), sharing the
+  variable scope, with recursion depth capped.
 """
 
 from __future__ import annotations
@@ -18,17 +32,26 @@ import asyncio
 import json
 import re
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from smithy.core.errors import ElementNotFound
+from smithy.core.selectors import SelectorStore
+
 if TYPE_CHECKING:
+    from smithy.core.assets import AssetProvider
     from smithy.core.registry import ToolRegistry
 
 FLOW_VERSION = 2
 
 _VAR_RE = re.compile(r"\$(\w+)((?:\.\w+|\[[^\[\]]+\])*)")
 _REF_PART_RE = re.compile(r"\.(\w+)|\[([^\[\]]+)\]")
+_ASSET_RE = re.compile(r"\$\{asset:([^}]+)\}")
 
 _REPR_LIMIT = 2000
+
+_ERROR_POLICIES = ("stop", "continue", "retry")
+_MAX_FLOW_DEPTH = 8
 
 
 class FlowError(Exception):
@@ -75,9 +98,7 @@ def _resolve_ref(name: str, path: str, variables: dict[str, Any]) -> Any:
         except FlowError:
             raise
         except Exception as exc:
-            raise FlowError(
-                f"cannot resolve ${name}{path}: {type(exc).__name__}: {exc}"
-            ) from exc
+            raise FlowError(f"cannot resolve ${name}{path}: {type(exc).__name__}: {exc}") from exc
     return value
 
 
@@ -92,14 +113,23 @@ def lookup(variables: dict[str, Any], path: str) -> Any:
         return None
 
 
-def interpolate(value: Any, variables: dict[str, Any]) -> Any:
-    """Substitute ``$name``/``$name.pid`` in config values from the scope.
+def interpolate(
+    value: Any,
+    variables: dict[str, Any],
+    *,
+    resolve_asset: Any = None,
+) -> Any:
+    """Substitute ``$name``/``$name.pid``/``${asset:name}`` in config values.
 
     A string that is a single reference keeps the referenced value's type;
     mixed text interpolates the referenced value as text. Unknown variable
-    names are left as-is.
+    names are left as-is. ``${asset:name}`` resolves through *resolve_asset*
+    (an :class:`~smithy.core.assets.AssetProvider`); unknown assets raise,
+    which fails the node.
     """
     if isinstance(value, str):
+        if resolve_asset is not None and "${asset:" in value:
+            value = _ASSET_RE.sub(lambda m: str(resolve_asset(m.group(1))), value)
         exact = _VAR_RE.fullmatch(value)
         if exact and exact.group(1) in variables:
             return _resolve_ref(exact.group(1), exact.group(2), variables)
@@ -115,17 +145,25 @@ def interpolate(value: Any, variables: dict[str, Any]) -> Any:
 
         return _VAR_RE.sub(sub, value)
     if isinstance(value, list):
-        return [interpolate(item, variables) for item in value]
+        return [interpolate(item, variables, resolve_asset=resolve_asset) for item in value]
     if isinstance(value, dict):
-        return {key: interpolate(item, variables) for key, item in value.items()}
+        return {
+            key: interpolate(item, variables, resolve_asset=resolve_asset)
+            for key, item in value.items()
+        }
     return value
 
 
-def evaluate_condition(condition: dict[str, Any], variables: dict[str, Any]) -> bool:
+def evaluate_condition(
+    condition: dict[str, Any],
+    variables: dict[str, Any],
+    *,
+    resolve_asset: Any = None,
+) -> bool:
     var = str(condition.get("var") or "")
     op = str(condition.get("op") or "exists")
     left: Any = lookup(variables, var)
-    right: Any = interpolate(condition.get("value"), variables)
+    right: Any = interpolate(condition.get("value"), variables, resolve_asset=resolve_asset)
     if op == "exists":
         return left is not None
     if op == "is_empty":
@@ -169,7 +207,13 @@ def parse_typed_value(value: Any, vtype: str) -> Any:
         return text
 
 
-def parse_set_value(raw: Any, vtype: str, variables: dict[str, Any]) -> Any:
+def parse_set_value(
+    raw: Any,
+    vtype: str,
+    variables: dict[str, Any],
+    *,
+    resolve_asset: Any = None,
+) -> Any:
     """Interpret a ``set`` node value with ``$ref`` support.
 
     A value that is a single reference (``$app``, ``$app.pid``) takes the
@@ -180,8 +224,35 @@ def parse_set_value(raw: Any, vtype: str, variables: dict[str, Any]) -> Any:
         exact = _VAR_RE.fullmatch(raw)
         if exact and exact.group(1) in variables:
             return _resolve_ref(exact.group(1), exact.group(2), variables)
-        return parse_typed_value(interpolate(raw, variables), vtype)
+        return parse_typed_value(interpolate(raw, variables, resolve_asset=resolve_asset), vtype)
     return parse_typed_value(raw, vtype)
+
+
+def _parse_on_error(raw: Any) -> dict[str, Any]:
+    """Normalize an ``on_error`` spec; raises on invalid policies."""
+    if raw is None:
+        return {"policy": "stop"}
+    if not isinstance(raw, dict):
+        raise FlowError("on_error must be an object")
+    policy = str(raw.get("policy") or "stop")
+    if policy not in _ERROR_POLICIES:
+        raise FlowError(f"unknown on_error policy {policy!r} (expected one of {_ERROR_POLICIES})")
+    spec: dict[str, Any] = {"policy": policy}
+    if policy == "retry":
+        retries = raw.get("retries", 2)
+        if isinstance(retries, bool) or not isinstance(retries, int) or retries < 0:
+            raise FlowError("on_error.retries must be an int >= 0")
+        delay_ms = raw.get("delay_ms", 500)
+        if isinstance(delay_ms, bool) or not isinstance(delay_ms, int) or delay_ms < 0:
+            raise FlowError("on_error.delay_ms must be an int >= 0")
+        spec["retries"] = retries
+        spec["delay_ms"] = delay_ms
+    save_error_as = raw.get("save_error_as")
+    if save_error_as is not None:
+        if not isinstance(save_error_as, str) or not save_error_as:
+            raise FlowError("on_error.save_error_as must be a non-empty string")
+        spec["save_error_as"] = save_error_as
+    return spec
 
 
 LogFn = Any  # Callable[[str, str], None]
@@ -196,6 +267,15 @@ class FlowRunner:
 
     The runner keeps loop state and the variable scope (a plain dict it
     mutates — pass the same dict to share scope with a debugger/REPL).
+
+    Args:
+        assets: Asset provider for ``${asset:name}`` interpolation
+            (default: ``EnvAssetProvider``).
+        selector_store: Selector registry for ``key`` fields in tool
+            configs (default: ``SMITHY_SELECTOR_STORE`` env or
+            ``selectors.json``).
+        dev_capture: Interactive re-capture of missing/stale keys
+            (default: ``SMITHY_DEV_CAPTURE`` env).
     """
 
     def __init__(
@@ -205,12 +285,20 @@ class FlowRunner:
         variables: dict[str, Any] | None = None,
         edges: list[dict[str, Any]] | None = None,
         log: LogFn | None = None,
+        assets: AssetProvider | None = None,
+        selector_store: SelectorStore | None = None,
+        dev_capture: bool | None = None,
     ) -> None:
         self._registry = registry
         self._variables: dict[str, Any] = variables if variables is not None else {}
         self._edges: list[dict[str, Any]] = edges or []
         self._log = log or _noop_log
         self._loops: dict[str, dict[str, Any]] = {}
+        self._assets = assets
+        self._selector_store = selector_store
+        self._dev_capture = dev_capture
+        self._secrets: list[str] = []
+        self._flow_depth = 0
 
     # ------------------------------------------------------------ navigation
 
@@ -220,19 +308,99 @@ class FlowRunner:
                 return str(edge.get("target"))
         return None
 
+    # ------------------------------------------------------------ interpolation
+
+    def _resolve_asset(self, name: str) -> str:
+        from smithy.core.assets import EnvAssetProvider
+
+        assets = self._assets if self._assets is not None else EnvAssetProvider()
+        value = str(assets.get(name))
+        if value:
+            self._secrets.append(value)
+        return value
+
+    def _render_config(self, config: dict[str, Any]) -> str:
+        rendered = json.dumps(config, ensure_ascii=False, default=str)
+        for secret in self._secrets:
+            if secret:
+                rendered = rendered.replace(secret, "***")
+        return short(rendered)
+
+    def _interpolate(self, value: Any) -> Any:
+        return interpolate(value, self._variables, resolve_asset=self._resolve_asset)
+
+    # ------------------------------------------------------------ selector keys
+
+    def _store(self) -> SelectorStore:
+        import os
+
+        if self._selector_store is None:
+            path = os.environ.get("SMITHY_SELECTOR_STORE", "selectors.json")
+            self._selector_store = SelectorStore(path)
+        return self._selector_store
+
+    def _dev_capture_enabled(self) -> bool:
+        import os
+
+        if self._dev_capture is not None:
+            return self._dev_capture
+        return os.environ.get("SMITHY_DEV_CAPTURE", "").strip().lower() in ("1", "true", "yes")
+
+    async def _apply_selector_key(self, config: dict[str, Any]) -> str | None:
+        """Resolve a tool config's ``key`` field from the selector store.
+
+        Returns the key (or ``None``); mutates *config* in place. In dev
+        capture mode a missing key is recorded interactively; in
+        production it is a hard error.
+        """
+        key = config.get("key")
+        config.pop("key", None)
+        if key is None:
+            return None
+        if not isinstance(key, str) or not key:
+            raise FlowError("config.key must be a non-empty string")
+        entry = self._store().get(key)
+        if entry is not None:
+            for field_name, value in entry.items():
+                config.setdefault(field_name, value)
+            return key
+        if not self._dev_capture_enabled():
+            raise FlowError(
+                f"no selector stored for key {key!r} in {self._store().path} — "
+                "record it with dev capture (SMITHY_DEV_CAPTURE=1) or store it manually"
+            )
+        from smithy.windows.tools.selector_capture import capture_once_async
+
+        captured = await capture_once_async()
+        self._store().put(key, captured.selector)
+        config.update(captured.selector)
+        return key
+
     # ------------------------------------------------------------ node steps
 
     async def _run_tool(self, node: dict[str, Any]) -> None:
         name = str(node.get("tool") or "")
         if not name:
             raise FlowError("tool node has no tool name")
-        config = interpolate(dict(node.get("config") or {}), self._variables)
-        self._log("info", f"▶ {name} {json.dumps(config, ensure_ascii=False, default=str)}")
+        config = self._interpolate(dict(node.get("config") or {}))
+        key = await self._apply_selector_key(config)
+        self._log("info", f"▶ {name} {self._render_config(config)}")
         start = time.perf_counter()
         try:
             result = await self._registry.execute(name, config)
         except asyncio.CancelledError:
             raise
+        except ElementNotFound:
+            if key is None or not self._dev_capture_enabled():
+                raise
+            from smithy.windows.tools.selector_capture import capture_once_async
+
+            captured = await capture_once_async()
+            self._store().put(key, captured.selector)
+            for field_name in ("name", "automation_id", "control_type", "class_name"):
+                config.pop(field_name, None)
+            config.update(captured.selector)
+            result = await self._registry.execute(name, config)
         except Exception as exc:
             self._log("error", f"✗ {name}: {type(exc).__name__}: {exc}")
             raise
@@ -242,6 +410,75 @@ class FlowRunner:
         save_as = node.get("save_as")
         if save_as:
             self._variables[str(save_as)] = result
+
+    async def _run_subflow(self, node: dict[str, Any]) -> None:
+        config = self._interpolate(dict(node.get("config") or {}))
+        path = config.get("path")
+        doc = config.get("doc")
+        if (path is None) == (doc is None):
+            raise FlowError("flow node needs exactly one of 'path' or 'doc'")
+        if path is not None:
+            if not isinstance(path, str) or not path:
+                raise FlowError("flow node 'path' must be a non-empty string")
+            try:
+                doc = json.loads(Path(path).read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise FlowError(f"cannot read subflow {path!r}: {exc}") from exc
+        if not isinstance(doc, dict):
+            raise FlowError("flow node 'doc' must be a flow document object")
+        if self._flow_depth >= _MAX_FLOW_DEPTH:
+            raise FlowError(f"subflow nesting deeper than {_MAX_FLOW_DEPTH}")
+        inputs = config.get("inputs")
+        if inputs is not None:
+            if not isinstance(inputs, dict):
+                raise FlowError("flow node 'inputs' must be an object")
+            for var, value in inputs.items():
+                self._variables[str(var)] = value
+        child = FlowRunner(
+            self._registry,
+            variables=self._variables,
+            log=self._log,
+            assets=self._assets,
+            selector_store=self._selector_store,
+            dev_capture=self._dev_capture,
+        )
+        child._flow_depth = self._flow_depth + 1
+        await child.run(doc)
+
+    async def _run_with_on_error(self, node: dict[str, Any], step: Any) -> None:
+        """Run *step* honoring the node's ``on_error`` spec."""
+        spec = _parse_on_error(node.get("on_error"))
+        policy = spec["policy"]
+        if policy == "stop":
+            await step(node)
+            return
+        node_id = str(node["id"])
+        attempts = spec.get("retries", 0) + 1
+        last: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                await step(node)
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                last = exc
+                if attempt < attempts - 1:
+                    self._log(
+                        "warning",
+                        f"node {node_id}: attempt {attempt + 1}/{attempts} failed "
+                        f"({type(exc).__name__}: {exc}) — retrying",
+                    )
+                    await asyncio.sleep(spec.get("delay_ms", 500) / 1000)
+        if policy == "continue":
+            var = str(spec.get("save_error_as") or "_error")
+            self._variables[var] = f"{type(last).__name__}: {last}"
+            self._log(
+                "error",
+                f"✗ node {node_id} failed (policy=continue) → ${var} = {last}",
+            )
+            return
+        raise last  # type: ignore[misc]
 
     def _init_loop(self, spec: dict[str, Any]) -> dict[str, Any]:
         max_iter = int(spec.get("max_iterations") or 100)
@@ -279,7 +516,7 @@ class FlowRunner:
             self._log("error", f"while-loop hit max_iterations={st['max']} → done")
             return self.next_by_handle(node_id, "done")
         condition = dict(spec.get("condition") or {})
-        if not evaluate_condition(condition, self._variables):
+        if not evaluate_condition(condition, self._variables, resolve_asset=self._resolve_asset):
             del self._loops[node_id]
             self._log("debug", "while condition is false → done")
             return self.next_by_handle(node_id, "done")
@@ -290,12 +527,17 @@ class FlowRunner:
         """Execute one node; return the next node id or ``None`` to finish."""
         kind = str(node.get("kind") or "")
         node_id = str(node["id"])
+        if node.get("on_error") is not None:
+            _parse_on_error(node.get("on_error"))
         if kind == "start":
             return self.next_by_handle(node_id, "out")
         if kind == "end":
             return None
         if kind == "tool":
-            await self._run_tool(node)
+            await self._run_with_on_error(node, self._run_tool)
+            return self.next_by_handle(node_id, "out")
+        if kind == "flow":
+            await self._run_with_on_error(node, self._run_subflow)
             return self.next_by_handle(node_id, "out")
         if kind == "set":
             cfg = dict(node.get("config") or {})
@@ -303,13 +545,17 @@ class FlowRunner:
             if not var:
                 raise FlowError("set node needs a variable name")
             vtype = str(cfg.get("type") or "auto")
-            value = parse_set_value(cfg.get("value"), vtype, self._variables)
+            value = parse_set_value(
+                cfg.get("value"), vtype, self._variables, resolve_asset=self._resolve_asset
+            )
             self._variables[var] = value
             self._log("debug", f"set ${var} = {short(repr(jsonable(value)))}")
             return self.next_by_handle(node_id, "out")
         if kind == "if":
             condition = dict(node.get("condition") or {})
-            branch = evaluate_condition(condition, self._variables)
+            branch = evaluate_condition(
+                condition, self._variables, resolve_asset=self._resolve_asset
+            )
             self._log(
                 "debug",
                 f"if {condition.get('var')} {condition.get('op')} → {branch}",
@@ -348,8 +594,114 @@ class FlowRunner:
             except FlowError as exc:
                 raise FlowError(f"node {node['id']}: {exc}") from exc
             except Exception as exc:
-                raise FlowError(
-                    f"node {node['id']}: {type(exc).__name__}: {exc}"
-                ) from exc
+                raise FlowError(f"node {node['id']}: {type(exc).__name__}: {exc}") from exc
             node = nodes.get(next_id) if next_id is not None else None
         return "finished"
+
+
+# ------------------------------------------------------------------ validation
+
+
+def validate_document(
+    doc: Any,
+    *,
+    registry: ToolRegistry | None = None,
+    selector_store: SelectorStore | None = None,
+) -> list[str]:
+    """Static checks for a flow document (dry-run mode).
+
+    Verifies the version, the start node, unique node ids, edge
+    endpoints, node shapes, ``on_error`` specs, and — when a *registry*
+    is given — that every tool node's tool is registered and its
+    interpolated-free config passes the tool's schema. When a
+    *selector_store* is given, ``key`` fields must resolve.
+
+    Returns:
+        A list of human-readable problems (empty = the document is fine).
+    """
+    problems: list[str] = []
+    if not isinstance(doc, dict):
+        return ["document must be an object"]
+    if doc.get("version") != FLOW_VERSION:
+        problems.append(f"unsupported flow version {doc.get('version')!r}")
+        return problems
+
+    nodes: dict[str, dict[str, Any]] = {}
+    for raw in doc.get("nodes") or []:
+        if not isinstance(raw, dict):
+            problems.append("node entry must be an object")
+            continue
+        node_id = str(raw.get("id") or "")
+        if not node_id:
+            problems.append("node without an id")
+            continue
+        if node_id in nodes:
+            problems.append(f"duplicate node id {node_id!r}")
+            continue
+        nodes[node_id] = raw
+
+    starts = [n for n in nodes.values() if n.get("kind") == "start"]
+    if len(starts) != 1:
+        problems.append(f"expected exactly one start node, found {len(starts)}")
+
+    for node_id, node in nodes.items():
+        kind = str(node.get("kind") or "")
+        if kind not in ("start", "end", "tool", "set", "if", "loop", "flow"):
+            problems.append(f"node {node_id!r}: unknown kind {kind!r}")
+        if kind == "tool" and not node.get("tool"):
+            problems.append(f"node {node_id!r}: tool node without a tool name")
+        if kind == "flow":
+            config = node.get("config") or {}
+            if (config.get("path") is None) == (config.get("doc") is None):
+                problems.append(f"node {node_id!r}: flow node needs exactly one of 'path' or 'doc'")
+        if node.get("on_error") is not None:
+            try:
+                _parse_on_error(node.get("on_error"))
+            except FlowError as exc:
+                problems.append(f"node {node_id!r}: {exc}")
+        if kind == "tool" and registry is not None:
+            name = str(node.get("tool") or "")
+            tool_obj = registry.get(name)
+            if tool_obj is None:
+                problems.append(f"node {node_id!r}: tool {name!r} is not registered")
+            else:
+                from smithy.core.schema import validate_against_schema
+
+                config = node.get("config") or {}
+                for field_problem in validate_against_schema(tool_obj.schema(), config):
+                    problems.append(f"node {node_id!r}: {name}: {field_problem}")
+                key = config.get("key") if isinstance(config, dict) else None
+                if isinstance(key, str) and key:
+                    if selector_store is not None:
+                        if selector_store.get(key) is None:
+                            problems.append(
+                                f"node {node_id!r}: no selector stored for key {key!r} "
+                                f"in {selector_store.path}"
+                            )
+                    else:
+                        import os
+
+                        store_path = os.environ.get("SMITHY_SELECTOR_STORE", "selectors.json")
+                        try:
+                            disk_store = SelectorStore(store_path)
+                            if disk_store.get(key) is None:
+                                problems.append(
+                                    f"node {node_id!r}: no selector stored for key {key!r} "
+                                    f"in {disk_store.path}"
+                                )
+                        except Exception:
+                            pass
+
+    for edge in doc.get("edges") or []:
+        if not isinstance(edge, dict):
+            problems.append("edge entry must be an object")
+            continue
+        source = edge.get("source")
+        target = edge.get("target")
+        if source not in nodes:
+            problems.append(f"edge source {source!r} is not a node")
+        if target not in nodes:
+            problems.append(f"edge target {target!r} is not a node")
+        if not edge.get("source_handle"):
+            problems.append(f"edge {source!r}→{target!r} has no source_handle")
+    return problems

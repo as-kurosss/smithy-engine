@@ -36,10 +36,19 @@ async def test_set_tool_if_end() -> None:
         [
             {"id": "s", "kind": "start", "config": {}},
             {"id": "n", "kind": "set", "config": {"var": "a", "type": "number", "value": "2"}},
-            {"id": "t", "kind": "tool", "tool": "test.add",
-             "config": {"a": "$a", "b": 3}, "save_as": "sum"},
-            {"id": "c", "kind": "if", "config": {},
-             "condition": {"var": "sum", "op": "gt", "value": 4}},
+            {
+                "id": "t",
+                "kind": "tool",
+                "tool": "test.add",
+                "config": {"a": "$a", "b": 3},
+                "save_as": "sum",
+            },
+            {
+                "id": "c",
+                "kind": "if",
+                "config": {},
+                "condition": {"var": "sum", "op": "gt", "value": 4},
+            },
             {"id": "e", "kind": "end", "config": {}},
         ],
         [
@@ -58,10 +67,17 @@ async def test_loop_foreach_interpolates_and_finishes() -> None:
     doc = _doc(
         [
             {"id": "s", "kind": "start", "config": {}},
-            {"id": "seed", "kind": "set",
-             "config": {"var": "items", "type": "json", "value": "[1, 2, 3]"}},
-            {"id": "lp", "kind": "loop",
-             "config": {}, "loop": {"mode": "foreach", "var": "items", "as": "it"}},
+            {
+                "id": "seed",
+                "kind": "set",
+                "config": {"var": "items", "type": "json", "value": "[1, 2, 3]"},
+            },
+            {
+                "id": "lp",
+                "kind": "loop",
+                "config": {},
+                "loop": {"mode": "foreach", "var": "items", "as": "it"},
+            },
             {"id": "t", "kind": "tool", "tool": "test.add", "config": {"a": "$it", "b": 0}},
             {"id": "e", "kind": "end", "config": {}},
         ],
@@ -95,8 +111,13 @@ async def test_shared_variables_dict_is_mutated() -> None:
     doc = _doc(
         [
             {"id": "s", "kind": "start", "config": {}},
-            {"id": "t", "kind": "tool", "tool": "test.add",
-             "config": {"a": "$seed", "b": 5}, "save_as": "out"},
+            {
+                "id": "t",
+                "kind": "tool",
+                "tool": "test.add",
+                "config": {"a": "$seed", "b": 5},
+                "save_as": "out",
+            },
         ],
         [{"id": "e1", "source": "s", "source_handle": "out", "target": "t"}],
     )

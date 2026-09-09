@@ -1,5 +1,110 @@
 # Changelog
 
+## Unreleased (pack delivery)
+
+Packs travel to client machines as zip archives over any URL
+(e.g. served by smithy-cloud) and are verified before a single node runs.
+
+### Added
+
+- **`smithy.pack zip DIR [--out FILE]`** — archive a verified pack into a
+  zip for delivery (manifest included; refuses to zip an unverified pack).
+- **`smithy.pack fetch SOURCE --dest DIR`** — download a pack zip from an
+  ``http(s)://`` URL (or a local path), extract it safely (zip-slip
+  rejected: absolute paths, ``..``, drive letters), verify the manifest,
+  and only then hand over a ready-to-run directory. A tampered archive
+  (any file modified vs its SHA-256) is rejected before execution.
+- Full client-side chain: `fetch → verify → run_flow --pack --stage
+  --transactional`. SHA-256 covers integrity (transit + storage);
+  authenticity (who signed the pack) is signature-ready in the manifest
+  schema and deferred until the cloud launch.
+
+## Unreleased (pack integrity)
+
+Packs are now verifiable delivery units: every shipped file is
+checksummed, the client refuses to run a tampered bot.
+
+### Added
+
+- **`smithy.pack`** — pack = directory + generated `pack.json` manifest
+  (schema `smithy-pack-v1`) with a SHA-256 per file. Machine-local
+  files (`robot.toml`, queues, logs, caches) are deliberately not
+  checksummed; the manifest carries the stage → flow entry map
+  (init/process/end) and is signature-ready for future signing.
+- **CLI**: `python -m smithy.pack build DIR --name N --version V`
+  (entries default to the init/process/end conventions, or pass
+  `--entry STAGE=FILE`) and `python -m smithy.pack verify DIR`.
+- **`run_flow --pack DIR --stage NAME`** — verify the manifest first,
+  then run the stage flow from the pack; `tools.py` and
+  `selectors.json` are picked up from the pack automatically.
+  A tampered file (any listed file modified, missing, or
+  unchecksummed entry) makes the runner refuse to start (exit 1).
+
+### Deferred
+
+- Manifest signatures (ed25519) — the format already reserves room.
+
+## Unreleased (dev→delivery pipeline)
+
+### Added
+
+- **Flow tracer** — `Smithy(trace="bot.flow.json")`: every successful
+  tool call is recorded as a v2 `tool` node; keyed calls are traced as
+  `key` (portable selectors), resolved fields are stripped; failed calls
+  are not steps. The document is rewritten after every call (crash-safe).
+  This is the "converter": bot.py (dev) → flow.json (delivery).
+- **`run_flow --vars FILE` / `--payload FILE`** — batch variables
+  (JSON object); precedence: flow defaults < payload < vars < `--set`.
+- **`run_flow --tools MODULE_OR_PY`** — register custom tools from a
+  module (`TOOLS = [...]` convention or module-level `AbstractTool`
+  instances). Custom tools ship once with the pack and are the only
+  code a client installation ever runs; flows arriving from the cloud
+  remain data.
+- **`run_flow --transactional`** — REFramework loop over a queue: each
+  work item's payload becomes the flow's variables, the flow runs once
+  per item, the final variable snapshot is stored as the item result.
+  Queue backend: `--db q.db` (local SQLite — full transactional
+  resilience without any server) or `--cloud URL --agent ID` with the
+  token from `SMITHY_CLOUD_TOKEN` (`--insecure` allows plain HTTP).
+  Summary line: processed/ok/business/system + stop reason.
+- Service contract unchanged: exit `0` finished, `1` failed, `2` stopped.
+
+### Deferred
+
+- `TransactionBot` lifecycle sugar (Initialize/Get/Process/Status/End
+  hooks), queue `priority` ordering, custom `get_transaction` hooks —
+  designed, not built yet.
+
+## Unreleased (flow hardening)
+
+### Added
+
+- **Node `on_error` policies** (tool and flow nodes): `stop` (default —
+  fail the run), `continue` (save `ExceptionType: message` into
+  `save_error_as`, default `$_error`, proceed via the `out` handle)
+  and `retry` (bounded `retries` with `delay_ms`). `asyncio`
+  cancellation always aborts, even under `continue`.
+- **`key` in tool configs** — selector resolution through the
+  `SelectorStore` (env `SMITHY_SELECTOR_STORE`, default
+  `selectors.json`). The dev-capture workflow works in flows:
+  with `SMITHY_DEV_CAPTURE=1` (or `run_flow --capture`) a missing key
+  is recorded interactively and a stale one (`ElementNotFound`) is
+  re-captured and retried; in production both fail honestly.
+- **`${asset:name}` interpolation** in tool configs, `set` values and
+  conditions — runtime secrets via an `AssetProvider` (default
+  `SMITHY_ASSET_*` env). Resolved asset values are redacted from the
+  runner's log output.
+- **`flow` nodes** (subflows): run a nested document from `config.doc`
+  (inline) or `config.path` (file), sharing the variable scope;
+  optional `inputs` mapping; recursion capped at 8 levels.
+- **`run_flow --validate`** — dry-run: version, start node, unique ids,
+  edge endpoints, node shapes, `on_error` specs, tool registration,
+  config vs tool schemas, selector-key existence. Nothing executes.
+- **Service-grade exit codes** for `run_flow`: `0` finished, `1`
+  validation/node failure, `2` stopped (SIGTERM/SIGINT/Ctrl+C cancel
+  the run cleanly) — a supervising service can now distinguish a crash
+  from a requested stop.
+
 ## 0.7.0 — 2026-09-08
 
 ### Added
@@ -11,10 +116,10 @@
 - keyed element access on the facade; programmatic selector capture API
 - core/selectors.py helpers module
 
-## Unreleased
+## Unreleased (dev-capture)
 
-Dev-capture workflow: record selectors from inside bot code, keyed
-selector registry, nothing re-prompts once fixed.
+Programmatic capture, keyed selector registry — nothing re-prompts
+once fixed.
 
 ### Added
 
@@ -77,9 +182,6 @@ files, Excel, image fallback, OCR and runtime secrets.
   `get_table`, `control_action`, `file`, and `excel`.
 
 ## Unreleased (audit hardening)
-
-Audit-driven hardening release: correctness, security, resource-leak and
-performance fixes across core and windows modules.
 
 ### Fixed
 

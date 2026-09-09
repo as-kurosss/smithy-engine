@@ -21,7 +21,13 @@ _MISSING = object()
 #: the engine (blocking.py, process.py) and must not leak into the robot
 #: config document as fake keys.
 _RESERVED_ENV_KEYS: frozenset[str] = frozenset(
-    {"blocking_timeout", "allowed_commands", "output_root", "dev_capture"}
+    {
+        "blocking_timeout",
+        "allowed_commands",
+        "output_root",
+        "dev_capture",
+        "selector_store",
+    }
 )
 
 

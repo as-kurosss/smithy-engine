@@ -67,12 +67,14 @@ class Smithy:
         assets: AssetProvider | None = None,
         selector_store: str | Path | None = None,
         dev_capture: bool | None = None,
+        trace: str | Path | None = None,
     ) -> None:
         self._registry = ToolRegistry()
         self._event_bus = EventBus()
         self._assets: AssetProvider = assets if assets is not None else EnvAssetProvider()
         self._selector_store_path = selector_store
         self._selector_store: SelectorStore | None = None
+        self._active_key: str | None = None
         if dev_capture is None:
             dev_capture = os.environ.get("SMITHY_DEV_CAPTURE", "").strip().lower() in (
                 "1",
@@ -80,6 +82,10 @@ class Smithy:
                 "yes",
             )
         self._dev_capture = dev_capture
+        if trace is not None:
+            from smithy.trace import FlowTracer
+
+            self._event_bus.add_middleware(FlowTracer(trace))
         if tools:
             for t in tools:
                 self._registry.register(t)
@@ -125,12 +131,17 @@ class Smithy:
             raise
         finally:
             elapsed_ms = (time.perf_counter() - start) * 1000
+            metadata: dict[str, Any] = {}
+            if self._active_key is not None:
+                metadata["selector_key"] = self._active_key
+                self._active_key = None
             event = ToolEvent(
                 tool_name=tool_name,
                 config=config,
                 result=result,
                 error=error,
                 duration_ms=elapsed_ms,
+                metadata=metadata,
             )
             await self._event_bus.emit(event)
         return result
@@ -154,6 +165,7 @@ class Smithy:
         if entry is not None:
             for field_name, value in entry.items():
                 base.setdefault(field_name, value)
+            self._active_key = key
             return base
         if not self._dev_capture:
             raise InvalidInput(
@@ -166,6 +178,7 @@ class Smithy:
         captured = await capture_once_async()
         self._store().put(key, captured.selector)
         base.update(captured.selector)
+        self._active_key = key
         return base
 
     async def _execute_keyed(self, tool_name: str, config: dict[str, Any], key: str | None) -> Any:
@@ -188,6 +201,7 @@ class Smithy:
             for field_name in ("name", "automation_id", "control_type", "class_name"):
                 config.pop(field_name, None)
             config.update(captured.selector)
+            self._active_key = key
             return await self._execute(tool_name, config)
 
     async def process_run(self, command: str, **kwargs: Any) -> ProcessHandle:

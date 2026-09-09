@@ -18,6 +18,7 @@ selectors2.json
 selectors3.json
 test_output.txt
 test.txt
+@AutomationLog.txt
 
 # Selector-capture / codegen outputs (machine-specific, generated)
 flow.json

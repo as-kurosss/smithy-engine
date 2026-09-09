@@ -1,28 +1,8 @@
 # Changelog
 
-## Unreleased (pack delivery)
+## 0.8.0 — 2026-09-09
 
-Packs travel to client machines as zip archives over any URL
-(e.g. served by smithy-cloud) and are verified before a single node runs.
-
-### Added
-
-- **`smithy.pack zip DIR [--out FILE]`** — archive a verified pack into a
-  zip for delivery (manifest included; refuses to zip an unverified pack).
-- **`smithy.pack fetch SOURCE --dest DIR`** — download a pack zip from an
-  ``http(s)://`` URL (or a local path), extract it safely (zip-slip
-  rejected: absolute paths, ``..``, drive letters), verify the manifest,
-  and only then hand over a ready-to-run directory. A tampered archive
-  (any file modified vs its SHA-256) is rejected before execution.
-- Full client-side chain: `fetch → verify → run_flow --pack --stage
-  --transactional`. SHA-256 covers integrity (transit + storage);
-  authenticity (who signed the pack) is signature-ready in the manifest
-  schema and deferred until the cloud launch.
-
-## Unreleased (pack integrity)
-
-Packs are now verifiable delivery units: every shipped file is
-checksummed, the client refuses to run a tampered bot.
+Dev → delivery pipeline: packs, tracer, transactional runs, flow hardening.
 
 ### Added
 
@@ -33,21 +13,18 @@ checksummed, the client refuses to run a tampered bot.
   (init/process/end) and is signature-ready for future signing.
 - **CLI**: `python -m smithy.pack build DIR --name N --version V`
   (entries default to the init/process/end conventions, or pass
-  `--entry STAGE=FILE`) and `python -m smithy.pack verify DIR`.
+  `--entry STAGE=FILE`), `verify DIR`, `zip DIR [--out FILE]` (refuses
+  to zip an unverified pack) and `fetch SOURCE --dest DIR` — download a
+  pack zip from an ``http(s)://`` URL (or a local path), extract it
+  safely (zip-slip rejected: absolute paths, ``..``, drive letters),
+  verify the manifest, and only then hand over a ready-to-run
+  directory. A tampered archive (any file modified vs its SHA-256) is
+  rejected before execution.
 - **`run_flow --pack DIR --stage NAME`** — verify the manifest first,
   then run the stage flow from the pack; `tools.py` and
   `selectors.json` are picked up from the pack automatically.
   A tampered file (any listed file modified, missing, or
   unchecksummed entry) makes the runner refuse to start (exit 1).
-
-### Deferred
-
-- Manifest signatures (ed25519) — the format already reserves room.
-
-## Unreleased (dev→delivery pipeline)
-
-### Added
-
 - **Flow tracer** — `Smithy(trace="bot.flow.json")`: every successful
   tool call is recorded as a v2 `tool` node; keyed calls are traced as
   `key` (portable selectors), resolved fields are stripped; failed calls
@@ -67,18 +44,6 @@ checksummed, the client refuses to run a tampered bot.
   resilience without any server) or `--cloud URL --agent ID` with the
   token from `SMITHY_CLOUD_TOKEN` (`--insecure` allows plain HTTP).
   Summary line: processed/ok/business/system + stop reason.
-- Service contract unchanged: exit `0` finished, `1` failed, `2` stopped.
-
-### Deferred
-
-- `TransactionBot` lifecycle sugar (Initialize/Get/Process/Status/End
-  hooks), queue `priority` ordering, custom `get_transaction` hooks —
-  designed, not built yet.
-
-## Unreleased (flow hardening)
-
-### Added
-
 - **Node `on_error` policies** (tool and flow nodes): `stop` (default —
   fail the run), `continue` (save `ExceptionType: message` into
   `save_error_as`, default `$_error`, proceed via the `out` handle)
@@ -104,8 +69,25 @@ checksummed, the client refuses to run a tampered bot.
   validation/node failure, `2` stopped (SIGTERM/SIGINT/Ctrl+C cancel
   the run cleanly) — a supervising service can now distinguish a crash
   from a requested stop.
+- **`HttpQueue.claim` version stamping** — the claim body carries the
+  engine version and the agent version (`SMITHY_AGENT_VERSION` env);
+  both fields are optional and ignored by servers without the feature.
+- Full client-side chain: `fetch → verify → run_flow --pack --stage
+  --transactional`. SHA-256 covers integrity (transit + storage);
+  authenticity (who signed the pack) is signature-ready in the manifest
+  schema and deferred until the cloud launch.
+
+### Deferred
+
+- Manifest signatures (ed25519) — the format already reserves room.
+- `TransactionBot` lifecycle sugar (Initialize/Get/Process/Status/End
+  hooks), queue `priority` ordering, custom `get_transaction` hooks —
+  designed, not built yet.
 
 ## 0.7.0 — 2026-09-08
+
+Dev-capture workflow, production toolset, audit hardening, flow-v2
+executor and the runner CLI.
 
 ### Added
 
@@ -113,16 +95,6 @@ checksummed, the client refuses to run a tampered bot.
   standalone runner CLI: `python -m smithy.run_flow flow.json [--set NAME=VALUE]`
   — flows from the designer now run as plain programs (e.g. inside
   smithy-cloud process bundles)
-- keyed element access on the facade; programmatic selector capture API
-- core/selectors.py helpers module
-
-## Unreleased (dev-capture)
-
-Programmatic capture, keyed selector registry — nothing re-prompts
-once fixed.
-
-### Added
-
 - Programmatic capture API (`smithy[capture]`):
   `capture_once()` / `capture_once_async()` — block the script, hover
   an element, press CTRL (ESC cancels via `CaptureCancelled`), get a
@@ -144,13 +116,6 @@ once fixed.
   bot = Smithy(tools=windows_tools(), dev_capture=True)
   await bot.click(key="login.submit")   # first run: capture; then: silent
   ```
-
-## Unreleased (production toolset)
-
-New toolset for production RPA: data extraction, native UIA patterns,
-files, Excel, image fallback, OCR and runtime secrets.
-
-### Added
 
 - `windows.get_table` — extract DataGrid/ListView/TreeView rows as JSON
   (columns from a header control + row arrays); works through wrapper
@@ -180,8 +145,26 @@ files, Excel, image fallback, OCR and runtime secrets.
 - Facade wrappers: `get_table()`, `control_action()`, `process_wait()`,
   `process_status()`, `asset()`; `windows_tools()` now bundles
   `get_table`, `control_action`, `file`, and `excel`.
-
-## Unreleased (audit hardening)
+- `HttpQueue(allow_insecure=True)` — plain-HTTP base URLs are rejected
+  unless explicitly allowed (loopback is always permitted); retried
+  error responses are closed.
+- `SMITHY_OUTPUT_ROOT` sandbox for screenshot paths; screenshots opt
+  into per-monitor-v2 DPI awareness (fixes misaligned window captures
+  on scaled displays).
+- `JsonlEventLogger` writes on a background thread (the event loop is
+  never blocked by disk I/O) and supports the context-manager protocol.
+- `ElementSelector.from_config()` — shared config→selector building
+  (previously duplicated in three places).
+- `InMemoryQueue.claim` is O(log n) via a per-queue heap; SQLite
+  backend enables WAL + `busy_timeout` and indexes `seq`.
+- `RetryTool(jitter=...)` — spread retries out under contention;
+  invalid constructor args raise `InvalidInput` (consistent with core).
+- `RetryTool`/registry: registering a tool with an empty `schema()`
+  emits a `UserWarning` (validation is silently disabled for it).
+- Config: `SMITHY_BLOCKING_TIMEOUT`/`SMITHY_ALLOWED_COMMANDS`/
+  `SMITHY_OUTPUT_ROOT` no longer leak into the robot config document;
+  `Config.__getattr__` no longer risks infinite recursion during
+  unpickling.
 
 ### Fixed
 
@@ -219,29 +202,6 @@ files, Excel, image fallback, OCR and runtime secrets.
 - **set_text/input_text:** both fallback errors are reported; raw
   COM/uiautomation exceptions are wrapped into `PlatformError` like in
   sibling tools.
-
-### Added
-
-- `HttpQueue(allow_insecure=True)` — plain-HTTP base URLs are rejected
-  unless explicitly allowed (loopback is always permitted); retried
-  error responses are closed.
-- `SMITHY_OUTPUT_ROOT` sandbox for screenshot paths; screenshots opt
-  into per-monitor-v2 DPI awareness (fixes misaligned window captures
-  on scaled displays).
-- `JsonlEventLogger` writes on a background thread (the event loop is
-  never blocked by disk I/O) and supports the context-manager protocol.
-- `ElementSelector.from_config()` — shared config→selector building
-  (previously duplicated in three places).
-- `InMemoryQueue.claim` is O(log n) via a per-queue heap; SQLite
-  backend enables WAL + `busy_timeout` and indexes `seq`.
-- `RetryTool(jitter=...)` — spread retries out under contention;
-  invalid constructor args raise `InvalidInput` (consistent with core).
-- `RetryTool`/registry: registering a tool with an empty `schema()`
-  emits a `UserWarning` (validation is silently disabled for it).
-- Config: `SMITHY_BLOCKING_TIMEOUT`/`SMITHY_ALLOWED_COMMANDS`/
-  `SMITHY_OUTPUT_ROOT` no longer leak into the robot config document;
-  `Config.__getattr__` no longer risks infinite recursion during
-  unpickling.
 
 ### Changed
 

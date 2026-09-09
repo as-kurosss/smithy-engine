@@ -48,6 +48,12 @@ asyncio.run(main())
 - **ClipboardTool** (`windows.clipboard`) — read/write clipboard text (needs `pyperclip`)
 - **ListElementsTool** (`windows.list_elements`) — list direct children to discover automation IDs
 - **HighlightTool** (`windows.highlight`) — flash a colored rectangle for debugging selectors
+- **GetTableTool** (`windows.get_table`) — extract DataGrid/ListView/TreeView rows as JSON
+- **ControlActionTool** (`windows.control_action`) — native UIA pattern actions (`invoke`, `toggle`, `expand`, `collapse`, `select`, `focus`) that keep working when a window is covered or unfocused
+- **FileTool** (`file`) — `read`/`write`/`append`/`copy`/`move`/`delete`/`exists`/`wait_for`/`list`; optional `SMITHY_FILE_ROOT` sandbox confines every path
+- **ExcelTool** (`excel`, extra `[excel]`) — `read`/`write`/`append` for xlsx via openpyxl, honors the same file sandbox
+- **FindImageTool / ClickImageTool** (`windows.find_image`, `windows.click_image`, extra `[image]`) — OpenCV template matching for UIA-invisible UIs (Citrix/RDP/Java/canvas)
+- **OcrTool** (`windows.ocr`) — text from an image file or screen region via the built-in Windows OCR engine, zero extra dependencies
 
 All UI tools accept optional `pid` (or a `ProcessHandle`) to scope element search to a specific window.
 
@@ -79,6 +85,51 @@ async def main() -> None:
 
 asyncio.run(main())
 ```
+
+## Keyed Selectors (dev capture)
+
+Write bot code with stable *keys* instead of inline selectors, run it in
+dev mode, and record each unknown selector interactively — hover the
+element, press **CTRL** (ESC cancels). A stored key runs silently; a
+missing key or a stale one (`ElementNotFound` mid-run) triggers a
+capture, persists it to `selectors.json`, and retries. In production
+(no `SMITHY_DEV_CAPTURE`) both fail honestly:
+
+```python
+bot = Smithy(tools=windows_tools(), dev_capture=True)
+await bot.click(key="login.submit")   # first run: capture; then: silent
+await bot.input_text(key="login.password", text=bot.asset("login.password"))
+```
+
+Enable dev mode with `dev_capture=True`, the `SMITHY_DEV_CAPTURE=1` env,
+or `run_flow --capture` for flows (`key` fields in tool configs work the
+same way). Keys never appear in the audit log as resolved fields — the
+tracer records them as portable `key` references (see Packs below).
+
+## Packs (dev → delivery)
+
+The delivery unit is a *pack*: a directory (flows, `tools.py`,
+`selectors.json`) plus a generated `pack.json` manifest with a SHA-256
+per file. Clients refuse to run a tampered bot:
+
+```bash
+python -m smithy.pack build bot_dir --name my-bot --version 1.0
+python -m smithy.pack verify bot_dir
+python -m smithy.pack zip bot_dir --out my-bot.zip
+python -m smithy.pack fetch https://cloud.example.com/bot.zip --dest bot_dir
+```
+
+Run a stage straight from the pack (manifest is verified first; `tools.py`
+and `selectors.json` are picked up automatically):
+
+```bash
+python -m smithy.run_flow --pack bot_dir --stage process
+```
+
+The tracer is the dev-side "converter": `Smithy(trace="bot.flow.json")`
+records every successful tool call as a v2 `tool` node, keyed calls as
+portable `key` references — run your bot script once, feed the resulting
+flow document into the pack.
 
 ## Transactions (REFramework-style)
 
@@ -265,6 +316,19 @@ Example:
 python -m smithy.run_flow flow.json --set name=value   # exit 0 = finished
 ```
 
+Exit codes: `0` finished, `1` validation/node failure, `2` stopped
+(SIGTERM/Ctrl+C) — a supervising service can distinguish a crash from a
+requested stop. Other modes:
+
+```bash
+python -m smithy.run_flow flow.json --validate         # dry-run, nothing executes
+python -m smithy.run_flow flow.json --vars vars.json --payload item.json
+python -m smithy.run_flow flow.json --tools my_tools.py
+# REFramework loop over a queue (SQLite or smithy-cloud):
+python -m smithy.run_flow flow.json --transactional --queue invoices --db q.db
+python -m smithy.run_flow flow.json --transactional --queue invoices --cloud URL --agent ID
+```
+
 Or programmatically: `smithy.flow.FlowRunner(registry).run(doc)`.
 
 ### Process bundle contract
@@ -321,7 +385,11 @@ mypy src/smithy --strict  # type check
 ```
 src/smithy/
 ├── __init__.py          — Public API: Smithy, ProcessHandle, Tool, errors
-├── facade.py            — Smithy facade (async tool dispatch)
+├── facade.py            — Smithy facade (async tool dispatch, keyed selectors)
+├── flow.py              — FlowRunner (flow-v2 executor: tool/flow/set/if/loop nodes)
+├── run_flow.py          — Runner CLI (--set/--vars/--tools/--validate/--pack/--transactional)
+├── pack.py              — Packs: manifest build/verify, zip, fetch (SHA-256 integrity)
+├── trace.py             — FlowTracer middleware: bot script → flow document
 ├── core/
 │   ├── tool.py          — Tool protocol, AbstractTool, @tool decorator
 │   ├── registry.py      — ToolRegistry (name → tool dispatch, schema validation)
@@ -329,16 +397,21 @@ src/smithy/
 │   ├── retry.py         — RetryTool (attempts / delay / retry_on)
 │   ├── logging.py       — JsonlEventLogger (JSONL audit log middleware)
 │   ├── config.py        — TOML robot config + SMITHY_* env overlay
+│   ├── assets.py        — AssetProvider protocol, SMITHY_ASSET_* (runtime secrets)
+│   ├── files.py         — FileTool (SMITHY_FILE_ROOT sandbox)
+│   ├── excel.py         — ExcelTool (openpyxl)
 │   ├── queue.py         — Queue protocol, InMemoryQueue, SqliteQueue
 │   ├── http_queue.py    — HttpQueue client for the orchestrator
 │   ├── transactions.py  — REFramework-style runner + heartbeat
 │   ├── events.py        — EventBus, ToolEvent, Middleware
-│   └── errors.py        — Error hierarchy (ToolError, ElementNotFound, etc.)└── windows/
+│   ├── selectors.py     — SelectorStore (key → selector registry)
+│   └── errors.py        — Error hierarchy (ToolError, ElementNotFound, etc.)
+└── windows/
     ├── element.py       — SafeUIElement (thread-safe COM wrapper)
     ├── selector.py      — ElementSelector (UIA tree search + match counting)
     ├── selector_rank.py — Selector ranking (candidates, scoring, confidence)
     └── tools/
-        ├── process.py          — ProcessTool
+        ├── process.py          — ProcessTool (allowlist, wait/status)
         ├── click.py            — ClickTool (button/clicks/coordinates)
         ├── wait.py             — WaitTool (appear/disappear)
         ├── delay.py            — DelayTool
@@ -357,6 +430,10 @@ src/smithy/
         ├── clipboard.py        — ClipboardTool
         ├── list_elements.py    — ListElementsTool
         ├── highlight.py        — HighlightTool
+        ├── get_table.py        — GetTableTool (DataGrid/ListView/TreeView → JSON)
+        ├── control_action.py   — ControlActionTool (native UIA patterns)
+        ├── image.py            — FindImageTool / ClickImageTool (OpenCV)
+        ├── ocr.py              — OcrTool (Windows OCR)
         ├── _resolve.py         — Shared element/point resolution helpers
         └── selector_capture/   — Dev tool for UI inspection + codegen
 ```

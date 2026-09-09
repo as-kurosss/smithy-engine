@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.8.4 — 2026-09-10
+
+### Added
+
+- **`smithy.pack push` — dev → orchestrator in one step:** build + verify
+  + zip + upload to smithy-cloud (`POST /packs/{name}/versions/{version}`)
+  in a single command. `--api-url` defaults to `$SMITHY_API_URL`, the
+  operator token comes from `$SMITHY_API_TOKEN` (override with
+  `--token-env`); plain http is accepted only for loopback hosts unless
+  `--insecure` is passed (same policy as `HttpQueue`). Transient server
+  errors (502/503/504) are retried with backoff; 409 surfaces as "bump
+  the version" — pack versions are immutable. The bundled
+  `.vscode/tasks.json` exposes `pack: push` as the default build task.
+
 ## 0.8.3 — 2026-09-09
 
 ### Fixed

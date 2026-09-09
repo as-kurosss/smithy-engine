@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +14,15 @@ import pytest
 
 from smithy import run_flow
 from smithy.core.errors import InvalidInput
-from smithy.pack import PACK_MANIFEST, build_pack, fetch_pack, load_manifest, verify_pack, zip_pack
+from smithy.pack import (
+    PACK_MANIFEST,
+    build_pack,
+    fetch_pack,
+    load_manifest,
+    publish_pack,
+    verify_pack,
+    zip_pack,
+)
 
 
 def _make_pack(tmp_path: Path) -> Path:
@@ -175,6 +185,144 @@ class TestDelivery:
         root = _make_pack(tmp_path)
         with pytest.raises(InvalidInput, match="failed verification"):
             zip_pack(root)
+
+
+class TestPublish:
+    """publish/push — build + verify + zip + orchestrator upload in one step."""
+
+    @staticmethod
+    def _fake_orchestrator(responses: dict[str, tuple[int, bytes]]) -> Any:
+        """Local HTTP server answering each URL path with a canned response.
+
+        ``server.requests`` collects ``(path, authorization, body)`` tuples.
+        """
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802 — http.server API
+                length = int(self.headers.get("Content-Length", "0"))
+                body = self.rfile.read(length)
+                code, extra = responses.get(self.path, (404, b'{"detail": "not found"}'))
+                self.send_response(code)
+                self.send_header("Content-Length", str(len(extra)))
+                self.end_headers()
+                self.wfile.write(extra)
+                server.requests.append((self.path, self.headers.get("Authorization", ""), body))
+
+            def log_message(self, *args: Any) -> None:
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        server.requests = []  # type: ignore[attr-defined]
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        return server
+
+    def test_publish_uploads_verified_zip(self, tmp_path: Path) -> None:
+        root = _make_pack(tmp_path)
+        server = self._fake_orchestrator({"/packs/p/versions/1.0.0": (201, b"")})
+        base = f"http://127.0.0.1:{server.server_port}"
+        try:
+            archive = publish_pack(root, name="p", version="1.0.0", api_url=base, token="secret")
+        finally:
+            server.shutdown()
+        assert archive.name == "p-1.0.0.zip"
+        assert verify_pack(root) == []
+        path, auth, body = server.requests[0]
+        assert path == "/packs/p/versions/1.0.0"
+        assert auth == "Bearer secret"
+        assert b'filename="p-1.0.0.zip"' in body
+        assert PACK_MANIFEST.encode() in body
+
+    def test_publish_rejects_http_non_loopback(self, tmp_path: Path) -> None:
+        root = _make_pack(tmp_path)
+        with pytest.raises(InvalidInput, match="https"):
+            publish_pack(
+                root,
+                name="p",
+                version="1.0.0",
+                api_url="http://cloud.example.com/api",
+                token="t",
+            )
+
+    def test_publish_http_non_loopback_with_insecure(self, tmp_path: Path) -> None:
+        root = _make_pack(tmp_path)
+        server = self._fake_orchestrator({"/packs/p/versions/1.0.0": (201, b"")})
+        host = f"http://127.0.0.1:{server.server_port}"
+        try:
+            publish_pack(
+                root,
+                name="p",
+                version="1.0.0",
+                api_url=host.replace("127.0.0.1", "localhost"),
+                token="t",
+            )
+        finally:
+            server.shutdown()
+
+    def test_publish_duplicate_version_raises(self, tmp_path: Path) -> None:
+        root = _make_pack(tmp_path)
+        server = self._fake_orchestrator(
+            {"/packs/p/versions/1.0.0": (409, b'{"detail": "exists"}')}
+        )
+        base = f"http://127.0.0.1:{server.server_port}"
+        try:
+            with pytest.raises(InvalidInput, match="409.*exists"):
+                publish_pack(root, name="p", version="1.0.0", api_url=base, token="t")
+        finally:
+            server.shutdown()
+
+    def test_push_local_zip_without_api_url(self, tmp_path: Path) -> None:
+        root = _make_pack(tmp_path)
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "smithy.pack",
+                "push",
+                str(root),
+                "--name",
+                "p",
+                "--version",
+                "1.0.0",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 1
+        assert "SMITHY_API_URL" in result.stderr
+
+    def test_push_uploads_to_orchestrator(self, tmp_path: Path) -> None:
+        import os
+
+        root = _make_pack(tmp_path)
+        server = self._fake_orchestrator({"/packs/p/versions/1.0.0": (201, b"")})
+        base = f"http://127.0.0.1:{server.server_port}"
+        env = {**os.environ, "SMITHY_API_TOKEN": "tok"}
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "smithy.pack",
+                    "push",
+                    str(root),
+                    "--name",
+                    "p",
+                    "--version",
+                    "1.0.0",
+                    "--api-url",
+                    base,
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+        finally:
+            server.shutdown()
+        assert result.returncode == 0, result.stderr
+        assert "pack published" in result.stdout
+        path, auth, _body = server.requests[0]
+        assert path == "/packs/p/versions/1.0.0"
+        assert auth == "Bearer tok"
 
 
 class TestRunFlowPack:

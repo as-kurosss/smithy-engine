@@ -1,0 +1,100 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "pack: push (build + verify + zip + upload)",
+      "type": "shell",
+      "command": "uv",
+      "args": [
+        "run",
+        "python",
+        "-m",
+        "smithy.pack",
+        "push",
+        ".",
+        "--name",
+        "${input:packName}",
+        "--version",
+        "${input:packVersion}"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "envFile": "${workspaceFolder}/.env"
+      },
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": [],
+      "presentation": { "clear": true, "showReuseMessage": false }
+    },
+    {
+      "label": "pack: build (только манифест)",
+      "type": "shell",
+      "command": "uv",
+      "args": [
+        "run",
+        "python",
+        "-m",
+        "smithy.pack",
+        "build",
+        ".",
+        "--name",
+        "${input:packName}",
+        "--version",
+        "${input:packVersion}"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "envFile": "${workspaceFolder}/.env"
+      },
+      "group": "build",
+      "problemMatcher": [],
+      "presentation": { "clear": true, "showReuseMessage": false }
+    },
+    {
+      "label": "pack: verify",
+      "type": "shell",
+      "command": "uv",
+      "args": ["run", "python", "-m", "smithy.pack", "verify", "."],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "envFile": "${workspaceFolder}/.env"
+      },
+      "problemMatcher": [],
+      "presentation": { "clear": true, "showReuseMessage": false }
+    },
+    {
+      "label": "pack: run (process)",
+      "type": "shell",
+      "command": "uv",
+      "args": [
+        "run",
+        "python",
+        "-m",
+        "smithy.run_flow",
+        "--pack",
+        ".",
+        "--stage",
+        "process"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "envFile": "${workspaceFolder}/.env"
+      },
+      "problemMatcher": [],
+      "presentation": { "clear": true, "showReuseMessage": false }
+    }
+  ],
+  "inputs": [
+    {
+      "id": "packName",
+      "type": "promptString",
+      "description": "Имя пака (например 01_notepad)",
+      "default": "01_notepad"
+    },
+    {
+      "id": "packVersion",
+      "type": "promptString",
+      "description": "Версия пака (напр. 1.0.0) — версия неизменяема в облаке, при повторной отправке подними",
+      "default": "1.0.0"
+    }
+  ]
+}

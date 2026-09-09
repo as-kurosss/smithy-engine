@@ -18,7 +18,9 @@ Schema: ``smithy-pack-v1``. The manifest is signature-ready: a future
 Delivery: :func:`zip_pack` archives a built pack, :func:`fetch_pack`
 downloads a zip (URL or local path), extracts it safely (zip-slip is
 rejected), verifies the manifest, and returns the ready-to-run
-directory.
+directory. :func:`publish_pack` — and the ``push`` CLI subcommand —
+does the whole dev→orchestrator release in one step: build → verify →
+zip → upload to smithy-cloud (``POST /packs/{name}/versions/{version}``).
 """
 
 from __future__ import annotations
@@ -26,7 +28,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
+import urllib.error
+import urllib.parse
 import urllib.request
+import uuid
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -35,6 +41,9 @@ from smithy.core.errors import InvalidInput
 
 PACK_MANIFEST = "pack.json"
 PACK_SCHEMA = "smithy-pack-v1"
+
+_RETRYABLE_STATUS: frozenset[int] = frozenset({502, 503, 504})
+_RETRY_BASE_SECONDS = 0.5
 
 #: Machine-local/runtime files — never checksummed.
 _IGNORED_PATTERNS: tuple[str, ...] = (
@@ -245,6 +254,131 @@ def zip_pack(directory: str | Path, *, out: str | Path | None = None) -> Path:
     return out_path
 
 
+# ------------------------------------------------------------------ publishing
+
+
+def _upload_pack(
+    url: str,
+    archive: Path,
+    *,
+    token: str,
+    timeout: float = 60.0,
+    max_retries: int = 3,
+) -> None:
+    """Multipart-POST *archive* to the orchestrator (stdlib urllib only).
+
+    Retried with exponential backoff on connection failures and 502/503/504;
+    meaningful answers (400/401/409/413/422) surface immediately with the
+    server's detail message.
+    """
+    boundary = uuid.uuid4().hex
+    data = archive.read_bytes()
+    body = (
+        (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="{archive.name}"\r\n'
+            f"Content-Type: application/zip\r\n\r\n"
+        ).encode()
+        + data
+        + f"\r\n--{boundary}--\r\n".encode()
+    )
+    request = urllib.request.Request(
+        url,
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "Authorization": f"Bearer {token}",
+        },
+    )
+    attempt = 0
+    while True:
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 — https enforced by caller, loopback http allowed
+                response.read()
+            return
+        except urllib.error.HTTPError as exc:
+            try:
+                if exc.code in _RETRYABLE_STATUS and attempt < max_retries:
+                    time.sleep(_RETRY_BASE_SECONDS * 2**attempt)
+                    attempt += 1
+                    continue
+                detail = exc.read().decode("utf-8", errors="replace")
+                message = f"upload to {url} failed with HTTP {exc.code}: {detail}"
+                if exc.code == 409:
+                    message += " (this name+version already exists — bump the version)"
+            finally:
+                exc.close()
+            raise InvalidInput(message, param="api_url", input_value=url) from exc
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            if attempt < max_retries:
+                time.sleep(_RETRY_BASE_SECONDS * 2**attempt)
+                attempt += 1
+                continue
+            raise InvalidInput(
+                f"upload to {url} failed: {exc}", param="api_url", input_value=url
+            ) from exc
+
+
+def _check_api_url(base_url: str, *, allow_insecure: bool) -> None:
+    """Same transport policy as HttpQueue: https always; loopback http free,
+    any other plain http only with *allow_insecure* (token in cleartext)."""
+    parsed = urllib.parse.urlparse(base_url)
+    if parsed.scheme not in ("http", "https"):
+        raise InvalidInput("api_url must be an http(s) URL", param="api_url", input_value=base_url)
+    if parsed.scheme != "https" and not allow_insecure:
+        host = (parsed.hostname or "").lower()
+        if host not in ("localhost", "127.0.0.1", "::1"):
+            raise InvalidInput(
+                "api_url must use https:// (pass --insecure to override)",
+                param="api_url",
+                input_value=base_url,
+            )
+
+
+def publish_pack(
+    directory: str | Path,
+    *,
+    name: str,
+    version: str,
+    api_url: str,
+    token: str,
+    out: str | Path | None = None,
+    entry: dict[str, str] | None = None,
+    allow_insecure: bool = False,
+    timeout: float = 60.0,
+) -> Path:
+    """Build, verify, zip and upload a pack — the whole release in one call.
+
+    Args:
+        directory: Pack folder (flows, ``selectors.json``, ``tools.py``, …).
+        name: Pack name (must match the manifest).
+        version: Pack version (must match the manifest).
+        api_url: Orchestrator API root, e.g. ``"https://host/api"``.
+        token: Bearer token with operator rights.
+        out: Optional zip path; defaults to ``<name>_<version>.zip``.
+        entry: Optional stage → flow file overrides.
+        allow_insecure: Allow plain http to non-loopback hosts.
+        timeout: Upload timeout in seconds.
+
+    Returns:
+        The zip path that was uploaded.
+
+    Raises:
+        InvalidInput: On verification or upload failure (409 = version
+            already exists — versions are immutable, bump the version).
+    """
+    root = Path(directory)
+    _check_api_url(api_url, allow_insecure=allow_insecure)
+    build_pack(root, name=name, version=version, entry=entry)
+    archive = zip_pack(root, out=out)
+    quoted_name = urllib.parse.quote(name, safe="")
+    quoted_version = urllib.parse.quote(version, safe="")
+    url = f"{api_url.rstrip('/')}/packs/{quoted_name}/versions/{quoted_version}"
+    _upload_pack(url, archive, token=token, timeout=timeout)
+    return archive
+
+
 def _safe_extract(archive: zipfile.ZipFile, dest: Path) -> None:
     """Extract *archive* into *dest*, rejecting unsafe member paths (zip-slip)."""
     root = dest.resolve()
@@ -313,8 +447,21 @@ def fetch_pack(source: str, dest: str | Path) -> Path:
     return dest_dir
 
 
+def _parse_entry(items: list[str]) -> dict[str, str] | None:
+    if not items:
+        return None
+    entry: dict[str, str] = {}
+    for item in items:
+        stage, sep, file = item.partition("=")
+        if not sep or not stage or not file:
+            raise SystemExit(f"--entry expects STAGE=FILE, got {item!r}")
+        entry[stage] = file
+    return entry
+
+
 def _main(argv: list[str] | None = None) -> int:
     import argparse
+    import os
     import sys
 
     parser = argparse.ArgumentParser(
@@ -322,17 +469,20 @@ def _main(argv: list[str] | None = None) -> int:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
+    def add_entry_arg(target: argparse.ArgumentParser) -> None:
+        target.add_argument(
+            "--entry",
+            action="append",
+            default=[],
+            metavar="STAGE=FILE",
+            help="stage → flow file (repeatable; defaults to init/process/end conventions)",
+        )
+
     p_build = sub.add_parser("build", help="generate pack.json for a directory")
     p_build.add_argument("directory")
     p_build.add_argument("--name", required=True)
     p_build.add_argument("--version", required=True)
-    p_build.add_argument(
-        "--entry",
-        action="append",
-        default=[],
-        metavar="STAGE=FILE",
-        help="stage → flow file (repeatable; defaults to init/process/end conventions)",
-    )
+    add_entry_arg(p_build)
 
     p_verify = sub.add_parser("verify", help="verify a built pack")
     p_verify.add_argument("directory")
@@ -341,6 +491,31 @@ def _main(argv: list[str] | None = None) -> int:
     p_zip.add_argument("directory")
     p_zip.add_argument("--out", default=None, help="target zip path")
 
+    p_push = sub.add_parser(
+        "push",
+        help="build + verify + zip + upload to the orchestrator (one step)",
+    )
+    p_push.add_argument("directory")
+    p_push.add_argument("--name", required=True)
+    p_push.add_argument("--version", required=True)
+    add_entry_arg(p_push)
+    p_push.add_argument(
+        "--api-url",
+        default=os.environ.get("SMITHY_API_URL"),
+        help="orchestrator API root, e.g. https://host/api (default $SMITHY_API_URL)",
+    )
+    p_push.add_argument(
+        "--token-env",
+        default="SMITHY_API_TOKEN",
+        help="env var holding the operator token (default SMITHY_API_TOKEN)",
+    )
+    p_push.add_argument("--out", default=None, help="target zip path")
+    p_push.add_argument(
+        "--insecure",
+        action="store_true",
+        help="allow plain http to non-loopback hosts (token travels in cleartext)",
+    )
+
     p_fetch = sub.add_parser("fetch", help="download/locate a pack zip, extract and verify it")
     p_fetch.add_argument("source", help="http(s):// URL or local zip path")
     p_fetch.add_argument("--dest", required=True, help="directory to extract into")
@@ -348,17 +523,11 @@ def _main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "build":
-        entry: dict[str, str] | None = None
-        if args.entry:
-            entry = {}
-            for item in args.entry:
-                stage, sep, file = item.partition("=")
-                if not sep or not stage or not file:
-                    print(f"--entry expects STAGE=FILE, got {item!r}", file=sys.stderr)
-                    return 1
-                entry[stage] = file
         manifest_path = build_pack(
-            args.directory, name=args.name, version=args.version, entry=entry
+            args.directory,
+            name=args.name,
+            version=args.version,
+            entry=_parse_entry(args.entry),
         )
         print(f"pack built: {manifest_path}")
         return 0
@@ -375,6 +544,35 @@ def _main(argv: list[str] | None = None) -> int:
     if args.command == "zip":
         out = zip_pack(args.directory, out=args.out)
         print(f"pack zipped: {out}")
+        return 0
+
+    if args.command == "push":
+        if not args.api_url:
+            print(
+                "no orchestrator URL: set --api-url or $SMITHY_API_URL "
+                "(without it only a local zip is produced)",
+                file=sys.stderr,
+            )
+            return 1
+        token = os.environ.get(args.token_env) or ""
+        if not token:
+            print(f"operator token is empty: set env {args.token_env!r}", file=sys.stderr)
+            return 1
+        try:
+            archive = publish_pack(
+                args.directory,
+                name=args.name,
+                version=args.version,
+                api_url=args.api_url,
+                token=token,
+                out=args.out,
+                entry=_parse_entry(args.entry),
+                allow_insecure=args.insecure,
+            )
+        except InvalidInput as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(f"pack published: {args.name} {args.version} -> {args.api_url} ({archive})")
         return 0
 
     try:

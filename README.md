@@ -119,6 +119,17 @@ python -m smithy.pack zip bot_dir --out my-bot.zip
 python -m smithy.pack fetch https://cloud.example.com/bot.zip --dest bot_dir
 ```
 
+One step from dev to the orchestrator — build, verify, zip and upload:
+
+```bash
+python -m smithy.pack push bot_dir --name my-bot --version 1.0 \
+  --api-url https://cloud.example.com/api
+```
+
+`--api-url` defaults to `$SMITHY_API_URL`, the operator token comes from
+`$SMITHY_API_TOKEN`. In VSCode, the bundled `.vscode/tasks.json` exposes
+this as the default build task (`Ctrl+Shift+B` → "pack: push").
+
 Run a stage straight from the pack (manifest is verified first; `tools.py`
 and `selectors.json` are picked up automatically):
 

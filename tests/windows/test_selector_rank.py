@@ -178,6 +178,46 @@ class TestRankCandidates:
         assert isinstance(ranked, RankedSelector)
         assert ranked.config == {"name": "OK"}
 
+    def test_early_exit_skips_remaining_probes(self) -> None:
+        calls: list[dict[str, str]] = []
+
+        def counter(config: dict[str, str]) -> int:
+            calls.append(dict(config))
+            return 1
+
+        ranked = rank_candidates(
+            [
+                ("automation_id", {"automation_id": "btnOk"}),
+                ("name+type", {"name": "OK", "control_type": "button"}),
+                ("name", {"name": "OK"}),
+            ],
+            count_matches=counter,
+        )
+        # unique automation_id scores 100 >= base 90 of the next candidate —
+        # nothing else can win, so the desktop walks for them never happen
+        assert ranked.strategy == "automation_id"
+        assert calls == [{"automation_id": "btnOk"}]
+
+    def test_early_exit_continues_while_no_unbeatable_unique(self) -> None:
+        calls: list[dict[str, str]] = []
+
+        def counter(config: dict[str, str]) -> int:
+            calls.append(dict(config))
+            return 1
+
+        long_dynamic = "2026-01-01 " + "x" * 70  # digits(30) + long(10) penalty → 60-40=20
+        ranked = rank_candidates(
+            [
+                ("name", {"name": long_dynamic}),  # score 20 < 40 → keep probing
+                ("class+type", {"class_name": "Win32", "control_type": "button"}),
+                # 40 >= 30 (the remaining "class" base) → break
+                ("class", {"class_name": "Win32"}),
+            ],
+            count_matches=counter,
+        )
+        assert ranked.strategy == "class+type"
+        assert len(calls) == 2
+
 
 class TestRankBestSelector:
     def test_numeric_control_type_translated(self) -> None:

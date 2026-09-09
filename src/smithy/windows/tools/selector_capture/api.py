@@ -15,7 +15,6 @@ selector is stored and the run continues.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import queue
 from dataclasses import dataclass, field
@@ -23,6 +22,8 @@ from typing import TYPE_CHECKING, Any
 
 from smithy.core.errors import ToolError
 from smithy.windows.tools.selector_capture.capture import (
+    BestSelector,
+    PathNode,
     capture_at_point,
     path_to_dicts,
 )
@@ -65,19 +66,8 @@ class CapturedSelector:
     warnings: tuple[str, ...] = ()
 
 
-def capture_once() -> CapturedSelector:
-    """Block until the user presses CTRL over a UI element; rank it.
-
-    Global hotkeys (same as the CLI single mode): **CTRL alone**
-    captures the element under the cursor, **ESC** cancels.
-
-    Returns:
-        A :class:`CapturedSelector` with the ranked config.
-
-    Raises:
-        CaptureCancelled: The user pressed ESC.
-        ImportError: ``pynput`` is not installed (``smithy[capture]``).
-    """
+def _wait_for_trigger() -> tuple[float, float]:
+    """Block until the user presses CTRL (or cancels with ESC); return the cursor position."""
     _require_pynput()
     events: queue.Queue[Any] = queue.Queue()
     with _ListenerGroup([_shared_listener(events)]):
@@ -96,25 +86,20 @@ def capture_once() -> CapturedSelector:
 
     mouse = MouseCtrl()
     x, y = mouse.position
-    # UIA/comtypes COM apartments are per-thread: when this runs off the
-    # main thread (capture_once_async), initialize COM for it — regular
-    # tools get this for free because they import uiautomation inside
-    # their worker threads, but capture_at_point imports it eagerly.
-    comtypes = None
-    with contextlib.suppress(ImportError):  # pragma: no cover — Windows-only dep
-        import comtypes  # type: ignore[no-redef]
+    return float(x), float(y)
 
-    if comtypes is not None:
-        comtypes.CoInitialize()
-    try:
-        path, sel = capture_at_point(float(x), float(y))
+
+def _capture_at(x: float, y: float) -> CapturedSelector:
+    """Capture and rank the element at *(x, y)* (needs a COM apartment)."""
+    from smithy.core.blocking import _run_with_com
+
+    def _capture_and_rank() -> tuple[list[PathNode], BestSelector, RankedSelector | None]:
+        path, sel = capture_at_point(x, y)
         logger.info("Captured: %s", sel.label())
+        return path, sel, _rank_captured(sel)
 
-        ranked = _rank_captured(sel)
-        _log_ranked(ranked, sel)
-    finally:
-        if comtypes is not None:
-            comtypes.CoUninitialize()
+    path, sel, ranked = _run_with_com(_capture_and_rank)
+    _log_ranked(ranked, sel)
     if ranked is not None:
         return _from_ranked(ranked, path)
     logger.warning("Ranking failed — using the unranked all-fields selector")
@@ -124,9 +109,34 @@ def capture_once() -> CapturedSelector:
     )
 
 
+def capture_once() -> CapturedSelector:
+    """Block until the user presses CTRL over a UI element; rank it.
+
+    Global hotkeys (same as the CLI single mode): **CTRL alone**
+    captures the element under the cursor, **ESC** cancels.
+
+    Returns:
+        A :class:`CapturedSelector` with the ranked config.
+
+    Raises:
+        CaptureCancelled: The user pressed ESC.
+        ImportError: ``pynput`` is not installed (``smithy[capture]``).
+    """
+    x, y = _wait_for_trigger()
+    return _capture_at(x, y)
+
+
 async def capture_once_async() -> CapturedSelector:
-    """Async twin of :func:`capture_once` (runs in a worker thread)."""
-    return await asyncio.to_thread(capture_once)
+    """Async twin of :func:`capture_once`.
+
+    The interactive CTRL wait runs on a plain worker thread; the UIA
+    capture runs on the shared COM-apartment thread (no timeout — a
+    human may take their time hovering).
+    """
+    from smithy.core.blocking import run_on_uia_thread
+
+    x, y = await asyncio.to_thread(_wait_for_trigger)
+    return await run_on_uia_thread(_capture_at, x, y)
 
 
 def _from_ranked(ranked: RankedSelector, path: list[Any] | None) -> CapturedSelector:

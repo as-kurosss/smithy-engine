@@ -171,9 +171,14 @@ def rank_candidates(
     candidates are heavily penalised but still comparable, so an
     ambiguous world still yields a deterministic answer with ``low``
     confidence instead of nothing.
+
+    Candidates come in priority order with strictly decreasing base
+    scores, so once a *unique* candidate scores above the highest base
+    score of the remaining candidates, they cannot win — the (expensive)
+    live desktop walks for them are skipped.
     """
     best: RankedSelector | None = None
-    for strategy, config in candidates:
+    for idx, (strategy, config) in enumerate(candidates):
         base = _BASE_SCORES.get(strategy, 0)
         penalty, stability_warnings = stability_penalty(config)
         try:
@@ -205,6 +210,13 @@ def rank_candidates(
         )
         if best is None or ranked.score > best.score:
             best = ranked
+        if best.unique:
+            remaining_base = max(
+                (_BASE_SCORES.get(s, 0) for s, _ in candidates[idx + 1 :]),
+                default=0,
+            )
+            if best.score >= remaining_base:
+                break
     if best is None:
         return RankedSelector(warnings=("no identifying fields — element cannot be targeted",))
     return best

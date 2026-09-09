@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.8.2 — 2026-09-09
+
+### Fixed
+
+- **COM apartment lifecycle (crash + silent-failure fix):** UIA elements
+  are apartment-bound COM objects; the per-call worker threads created
+  them in one thread and consumed them in another (or after that
+  apartment was torn down) — producing `E_FAIL` clicks, silent no-op
+  `input_text`, "no print output", and access-violation crashes
+  (`0xC0000005`) at process exit. All blocking UIA work now runs on a
+  single long-lived worker thread that owns one COM apartment
+  (`CoInitializeEx` once); UIA elements never cross apartments. A hung
+  call abandons the thread and the next call gets a fresh one, so the
+  timeout guarantee is preserved.
+
+### Changed
+
+- **Selector ranking early exit:** candidates come in priority order
+  with strictly decreasing base scores, so once a unique candidate
+  scores above the highest base score of the remaining candidates, the
+  (expensive) live desktop walks for them are skipped. Interactive
+  capture after CTRL now completes in ~1–2 s instead of ~10 s on busy
+  desktops; the ranking result is unchanged.
+
 ## 0.8.1 — 2026-09-09
 
 ### Fixed

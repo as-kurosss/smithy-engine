@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.3 — 2026-09-09
+
+### Fixed
+
+- **`smithy.pack build` no longer checksums machine-local junk:** running
+  it on a project root that contains a virtualenv (`.venv/`), `.git/`,
+  IDE directories or tool caches listed every one of those files in the
+  manifest. Environments, VCS and caches are now ignored alongside the
+  existing machine-local patterns (`robot.toml`, queues, logs).
+
 ## 0.8.2 — 2026-09-09
 
 ### Fixed

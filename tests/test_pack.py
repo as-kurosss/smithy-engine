@@ -78,6 +78,20 @@ class TestBuildVerify:
         assert "robot.toml" not in listed
         assert "queue.db" not in listed
 
+    def test_venv_and_caches_not_listed(self, tmp_path: Path) -> None:
+        root = _make_pack(tmp_path)
+        venv = root / ".venv" / "Lib" / "site-packages" / "pkg"
+        venv.mkdir(parents=True)
+        (venv / "module.py").write_text("x = 1", encoding="utf-8")
+        (root / ".git" / "HEAD").parent.mkdir(parents=True)
+        (root / ".git" / "HEAD").write_text("ref: main", encoding="utf-8")
+        (root / ".pytest_cache" / "v").mkdir(parents=True)
+        (root / ".pytest_cache" / "v" / "cache.json").write_text("{}", encoding="utf-8")
+        build_pack(root, name="p", version="1")
+        manifest = load_manifest(root)
+        listed = {item["path"] for item in manifest["files"]}
+        assert listed == {"process.flow.json", "selectors.json"}
+
 
 class TestPackCli:
     def test_cli_build_and_verify(self, tmp_path: Path) -> None:

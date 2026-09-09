@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "smithy-engine"
-version = "0.8.2"
+version = "0.8.3"
 description = "Free Python RPA engine — create automation bots with simple API"
 readme = "README.md"
 license = "MIT"

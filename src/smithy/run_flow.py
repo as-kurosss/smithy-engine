@@ -43,7 +43,14 @@ from typing import TYPE_CHECKING, Any
 
 from smithy.core.errors import BusinessError, InfrastructureError
 from smithy.core.selectors import SelectorStore
-from smithy.flow import FlowError, FlowRunner, jsonable, parse_typed_value, validate_document
+from smithy.flow import (
+    FlowError,
+    FlowRunner,
+    check_variable_types,
+    jsonable,
+    parse_typed_value,
+    validate_document,
+)
 from smithy.pack import manifest_lists_file
 
 if TYPE_CHECKING:
@@ -174,7 +181,11 @@ def _seed_variables(doc: dict[str, Any]) -> dict[str, Any]:
             continue
         name = item.get("name")
         if isinstance(name, str) and name:
-            seeded[name] = parse_typed_value(item.get("value"), str(item.get("type") or "auto"))
+            try:
+                seeded[name] = parse_typed_value(item.get("value"), str(item.get("type") or "auto"))
+            except (ValueError, TypeError):
+                # Leave the raw value; the fail-fast type check reports it.
+                seeded[name] = item.get("value")
     return seeded
 
 
@@ -394,6 +405,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"cannot read variables file: {exc}", file=sys.stderr)
                 return _EXIT_FAILED
     variables.update(_parse_sets(args.set, parser))
+
+    type_problems = check_variable_types(doc, variables)
+    if type_problems:
+        for problem in type_problems:
+            print(f"variable type error: {problem}", file=sys.stderr)
+        return _EXIT_FAILED
 
     runner = FlowRunner(
         registry,

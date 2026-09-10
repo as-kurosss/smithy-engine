@@ -104,6 +104,22 @@ class TestDocumentVariables:
         assert run_flow.main([str(path)]) == 1
         assert "world 3" in capsys.readouterr().err
 
+    def test_declared_type_mismatch_fails_fast(self, tmp_path: Path, capsys: Any) -> None:
+        doc = {
+            "version": 2,
+            "variables": [{"name": "n", "type": "number", "value": "3"}],
+            "nodes": [
+                {"id": "s", "kind": "start", "config": {}},
+                {"id": "e", "kind": "end", "config": {}},
+            ],
+            "edges": _chain("s", "e"),
+        }
+        path = _write(tmp_path, doc)
+        assert run_flow.main([str(path), "--set", "n=abc"]) == 1
+        assert "variable type error" in capsys.readouterr().err
+        # A matching value runs normally.
+        assert run_flow.main([str(path), "--set", "n=5"]) == 0
+
 
 class TestExitCodes:
     def test_finished_returns_zero(self, tmp_path: Path, monkeypatch: Any) -> None:

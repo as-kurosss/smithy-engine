@@ -354,7 +354,7 @@ class TestSelectorKeys:
 
 
 class TestSubflows:
-    async def test_inline_subflow_shares_scope(self) -> None:
+    async def test_global_subflow_reads_globals_but_does_not_leak(self) -> None:
         sub = _doc(
             [
                 {"id": "s", "kind": "start", "config": {}},
@@ -362,15 +362,14 @@ class TestSubflows:
                     "id": "t",
                     "kind": "tool",
                     "tool": "test.add",
-                    "config": {"a": "$seed", "b": 1},
+                    "config": {"a": "$G_seed", "b": 1},
                     "save_as": "inner",
                 },
                 {"id": "e", "kind": "end", "config": {}},
             ],
             _chain("s", "t", "e"),
         )
-        runner = FlowRunner(_registry(), variables={"seed": 41})
-        doc = _doc(
+        root = _doc(
             [
                 {"id": "s", "kind": "start", "config": {}},
                 {"id": "sub", "kind": "flow", "config": {"doc": sub}},
@@ -378,8 +377,12 @@ class TestSubflows:
             ],
             _chain("s", "sub", "e"),
         )
-        assert await runner.run(doc) == "finished"
-        assert runner._variables["inner"] == 42
+        root["variables"] = [{"name": "G_seed", "type": "number", "value": "41"}]
+        runner = FlowRunner(_registry(), variables={"G_seed": 41})
+        assert await runner.run(root) == "finished"
+        # The child read the global $G_seed, but its own variable did not leak.
+        assert "inner" not in runner._variables
+        assert runner._variables["G_seed"] == 41
 
     async def test_subflow_from_file(self, tmp_path: Path) -> None:
         sub = _doc(
@@ -402,7 +405,8 @@ class TestSubflows:
             _chain("s", "sub", "e"),
         )
         await runner.run(doc)
-        assert runner._variables["x"] == "from-file"
+        # A subflow's local variable does not leak into the parent scope.
+        assert "x" not in runner._variables
 
     async def test_subflow_error_respects_on_error(self) -> None:
         bad_sub = _doc(
@@ -469,7 +473,6 @@ class TestSubflows:
                     "kind": "flow",
                     "config": {
                         "doc": sub,
-                        "scope": "isolated",
                         "inputs": {"x": "$seed"},
                         "outputs": {"result": "y"},
                     },
@@ -500,7 +503,7 @@ class TestSubflows:
                 {
                     "id": "sub",
                     "kind": "flow",
-                    "config": {"doc": sub, "scope": "isolated", "outputs": ["made"]},
+                    "config": {"doc": sub, "outputs": ["made"]},
                 },
                 {"id": "e", "kind": "end", "config": {}},
             ],
@@ -509,24 +512,70 @@ class TestSubflows:
         assert await runner.run(doc) == "finished"
         assert runner._variables["made"] == 7
 
-    async def test_outputs_without_isolated_scope_fails(self) -> None:
+    async def test_global_outputs_return_values(self) -> None:
         sub = _doc(
             [
                 {"id": "s", "kind": "start", "config": {}},
+                {"id": "set", "kind": "set", "config": {"var": "made", "value": 7}},
                 {"id": "e", "kind": "end", "config": {}},
             ],
-            _chain("s", "e"),
+            _chain("s", "set", "e"),
         )
+        runner = FlowRunner(_registry())
         doc = _doc(
             [
                 {"id": "s", "kind": "start", "config": {}},
-                {"id": "sub", "kind": "flow", "config": {"doc": sub, "outputs": ["x"]}},
+                {
+                    "id": "sub",
+                    "kind": "flow",
+                    "config": {"doc": sub, "outputs": ["made"]},
+                },
                 {"id": "e", "kind": "end", "config": {}},
             ],
             _chain("s", "sub", "e"),
         )
-        with pytest.raises(FlowError, match="isolated"):
-            await FlowRunner(_registry()).run(doc)
+        assert await runner.run(doc) == "finished"
+        # Explicitly declared output comes back; nothing else does.
+        assert runner._variables["made"] == 7
+
+    async def test_globals_reach_nested_subflows_without_inputs(self) -> None:
+        inner = _doc(
+            [
+                {"id": "s", "kind": "start", "config": {}},
+                {
+                    "id": "t",
+                    "kind": "tool",
+                    "tool": "test.add",
+                    "config": {"a": "$G_shared_counter", "b": 1},
+                    "save_as": "result",
+                },
+                {"id": "e", "kind": "end", "config": {}},
+            ],
+            _chain("s", "t", "e"),
+        )
+        middle = _doc(
+            [
+                {"id": "s", "kind": "start", "config": {}},
+                {"id": "sub", "kind": "flow", "config": {"doc": inner, "outputs": ["result"]}},
+                {"id": "e", "kind": "end", "config": {}},
+            ],
+            _chain("s", "sub", "e"),
+        )
+        root = _doc(
+            [
+                {"id": "s", "kind": "start", "config": {}},
+                {"id": "sub", "kind": "flow", "config": {"doc": middle, "outputs": ["result"]}},
+                {"id": "e", "kind": "end", "config": {}},
+            ],
+            _chain("s", "sub", "e"),
+        )
+        root["variables"] = [
+            {"name": "G_shared_counter", "type": "number", "value": "41"}
+        ]
+        runner = FlowRunner(_registry(), variables={"G_shared_counter": 41})
+        assert await runner.run(root) == "finished"
+        # The deepest subflow read the root global with no inputs passed down.
+        assert runner._variables["result"] == 42
 
 
 # ------------------------------------------------------------------ fail node
@@ -613,21 +662,20 @@ class TestValidate:
         assert "target 'ghost'" in text
         assert "source 'ghost'" in text
 
-    def test_flow_scope_and_outputs_are_validated(self) -> None:
+    def test_flow_inputs_outputs_are_validated(self) -> None:
         doc = _doc(
             [
                 {"id": "s", "kind": "start", "config": {}},
                 {
                     "id": "sub",
                     "kind": "flow",
-                    "config": {"doc": {}, "scope": "weird", "inputs": "no", "outputs": "no"},
+                    "config": {"doc": {}, "inputs": "no", "outputs": "no"},
                 },
                 {"id": "e", "kind": "end", "config": {}},
             ],
             _chain("s", "sub", "e"),
         )
         text = "\n".join(validate_document(doc))
-        assert "scope" in text
         assert "'inputs' must be an object" in text
         assert "'outputs' must be a list or object" in text
 
@@ -661,6 +709,28 @@ class TestValidate:
         doc["variables"] = [{"name": "$x", "type": "string", "value": "v"}]
         text = "\n".join(validate_document(doc, registry=_registry()))
         assert text.count("plain identifier") >= 3
+
+    def test_ref_type_checked_against_declared_variable(self) -> None:
+        doc = _doc(
+            [
+                {"id": "s", "kind": "start", "config": {}},
+                {
+                    "id": "t",
+                    "kind": "tool",
+                    "tool": "test.typed_add",
+                    "config": {"a": "$n", "b": 1},
+                },
+                {"id": "e", "kind": "end", "config": {}},
+            ],
+            _chain("s", "t", "e"),
+        )
+        doc["variables"] = [{"name": "n", "type": "string", "value": "x"}]
+        text = "\n".join(validate_document(doc, registry=_registry()))
+        assert "expects integer" in text and "$n is declared string" in text
+
+        doc["variables"] = [{"name": "n", "type": "number", "value": "3"}]
+        problems = validate_document(doc, registry=_registry())
+        assert not any("expects integer" in problem for problem in problems)
 
     def test_tool_schema_check(self) -> None:
         doc = _doc(

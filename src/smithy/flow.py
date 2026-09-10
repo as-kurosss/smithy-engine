@@ -22,8 +22,9 @@ anything but registered tools, and supports:
   ``SMITHY_DEV_CAPTURE``);
 - ``${asset:name}`` interpolation — runtime secrets via an
   :class:`AssetProvider`; asset values are redacted from logs;
-- ``flow`` nodes — subflows (inline document or file), sharing the
-  variable scope, with recursion depth capped.
+- ``flow`` nodes — subflows (inline document or file); in global scope a
+  subflow *reads* the parent variables but its own writes stay local, and
+  declared ``outputs`` are the only values copied back.
 """
 
 from __future__ import annotations
@@ -66,6 +67,112 @@ def _collect_strings(value: Any) -> list[str]:
     if isinstance(value, (list, tuple)):
         return [item for child in value for item in _collect_strings(child)]
     return []
+
+
+#: A variable whose name starts with this prefix is global (visible to
+#: every subflow at any depth).
+_GLOBAL_PREFIX = "G_"
+
+_VAR_TYPES = ("auto", "string", "number", "bool", "json")
+
+#: Declared variable type → JSON-schema field types it may feed (exact ``$ref``).
+_SCHEMA_TYPE_OK: dict[str, frozenset[str]] = {
+    "integer": frozenset({"integer", "number", "auto"}),
+    "number": frozenset({"integer", "number", "auto"}),
+    "string": frozenset({"string", "auto"}),
+    "boolean": frozenset({"bool", "auto"}),
+    "array": frozenset({"json", "auto"}),
+    "object": frozenset({"json", "auto"}),
+}
+
+
+def _declared_types(doc: dict[str, Any]) -> dict[str, str]:
+    """Declared type per variable (typed-list form only; object form is untyped)."""
+    types: dict[str, str] = {}
+    raw = doc.get("variables")
+    if isinstance(raw, list):
+        for item in raw:
+            if isinstance(item, dict):
+                name = item.get("name")
+                if isinstance(name, str) and name:
+                    types[name] = str(item.get("type") or "auto")
+    return types
+
+
+def _global_names(doc: dict[str, Any]) -> set[str]:
+    """Names prefixed ``G_`` — visible to every subflow at any depth."""
+    names: set[str] = set()
+    raw = doc.get("variables")
+    if isinstance(raw, dict):
+        names.update(key for key in raw if isinstance(key, str) and key.startswith(_GLOBAL_PREFIX))
+    elif isinstance(raw, list):
+        for item in raw:
+            if isinstance(item, dict):
+                name = item.get("name")
+                if isinstance(name, str) and name.startswith(_GLOBAL_PREFIX):
+                    names.add(name)
+    return names
+
+
+def check_variable_types(doc: dict[str, Any], values: dict[str, Any]) -> list[str]:
+    """Fail-fast checks: every declared variable value matches its type.
+
+    Returns a list of human-readable problems (empty = fine). ``auto``
+    variables are never checked.
+    """
+    problems: list[str] = []
+    for name, dtype in _declared_types(doc).items():
+        if dtype == "auto" or name not in values:
+            continue
+        value = values[name]
+        if dtype == "string":
+            ok = isinstance(value, str)
+        elif dtype == "number":
+            ok = isinstance(value, (int, float)) and not isinstance(value, bool)
+        elif dtype == "bool":
+            ok = isinstance(value, bool)
+        elif dtype == "json":
+            ok = value is None or isinstance(value, (dict, list, str, int, float, bool))
+        else:
+            problems.append(f"variable {name!r}: unknown type {dtype!r}")
+            continue
+        if not ok:
+            problems.append(f"variable {name!r}: expected {dtype}, got {type(value).__name__}")
+    return problems
+
+
+def _ref_type_problems(
+    node_id: str,
+    tool_name: str,
+    tool_schema: dict[str, Any],
+    config: dict[str, Any],
+    declared: dict[str, str],
+) -> list[str]:
+    """Type-check exact ``$ref`` field values against declared variable types."""
+    problems: list[str] = []
+    properties = tool_schema.get("properties") or {}
+    for key, spec in properties.items():
+        if not isinstance(spec, dict):
+            continue
+        allowed = _SCHEMA_TYPE_OK.get(str(spec.get("type")))
+        if allowed is None:
+            continue
+        value = config.get(key)
+        if not isinstance(value, str):
+            continue
+        match = _VAR_RE.fullmatch(value)
+        if match is None:
+            continue
+        variable = match.group(1)
+        declared_type = declared.get(variable)
+        if declared_type is None or declared_type == "auto":
+            continue
+        if declared_type not in allowed:
+            problems.append(
+                f"node {node_id!r}: {tool_name}: {key!r} expects {spec.get('type')}, "
+                f"but ${variable} is declared {declared_type}"
+            )
+    return problems
 
 
 _REPR_LIMIT = 2000
@@ -342,6 +449,7 @@ class FlowRunner:
         self._dev_capture = dev_capture
         self._secrets: list[str] = []
         self._secret_names: set[str] = set()
+        self._globals: dict[str, Any] = {}
         self._flow_depth = 0
 
     # ------------------------------------------------------------ navigation
@@ -501,23 +609,16 @@ class FlowRunner:
         if self._flow_depth >= _MAX_FLOW_DEPTH:
             raise FlowError(f"subflow nesting deeper than {_MAX_FLOW_DEPTH}")
 
-        scope = str(config.get("scope") or "shared")
-        if scope not in ("shared", "isolated"):
-            raise FlowError(f"flow node 'scope' must be 'shared' or 'isolated', got {scope!r}")
         inputs = config.get("inputs")
         if inputs is not None and not isinstance(inputs, dict):
             raise FlowError("flow node 'inputs' must be an object")
 
-        if scope == "isolated":
-            # Function semantics: the child sees only the declared inputs,
-            # and only declared outputs flow back to the parent.
-            child_variables: dict[str, Any] = {
-                str(var): value for var, value in (inputs or {}).items()
-            }
-        else:
-            child_variables = self._variables
-            for var, value in (inputs or {}).items():
-                self._variables[str(var)] = value
+        # Every subflow runs isolated: it starts with the project globals
+        # (declared on the main flow) plus the declared inputs, its own writes
+        # stay local, and only declared ``outputs`` are copied back.
+        child_variables: dict[str, Any] = dict(self._globals)
+        for var, value in (inputs or {}).items():
+            child_variables[str(var)] = value
 
         child = FlowRunner(
             self._registry,
@@ -529,14 +630,13 @@ class FlowRunner:
             max_steps=self._max_steps,
         )
         child._flow_depth = self._flow_depth + 1
+        child._globals = self._globals
         child._secrets = self._secrets
         child._secret_names = self._secret_names
         await child.run(doc)
 
         outputs = config.get("outputs")
         if outputs is not None:
-            if scope != "isolated":
-                raise FlowError("flow node 'outputs' requires 'scope': 'isolated'")
             self._copy_outputs(outputs, child_variables)
 
     def _copy_outputs(self, outputs: Any, child_variables: dict[str, Any]) -> None:
@@ -766,6 +866,18 @@ class FlowRunner:
         else:
             self._edges = list(self._edges_default)
         self._loops = {}
+        # Globals declared on this document become visible to every subflow
+        # at any depth; a child inherits what the parent already has.
+        declared_globals = _global_names(doc)
+        if declared_globals:
+            self._globals = {
+                **self._globals,
+                **{
+                    name: self._variables[name]
+                    for name in declared_globals
+                    if name in self._variables
+                },
+            }
         steps = 0
         node: dict[str, Any] | None = start
         while node is not None:
@@ -853,10 +965,16 @@ def validate_document(
                 problems.append(f"variable name {key!r} must be a plain identifier (no '$')")
     elif isinstance(variables, list):
         for item in variables:
-            if isinstance(item, dict) and not _identifier_ok(item.get("name")):
+            if not isinstance(item, dict):
+                continue
+            if not _identifier_ok(item.get("name")):
                 problems.append(
                     f"variable name {item.get('name')!r} must be a plain identifier (no '$')"
                 )
+            vtype = item.get("type")
+            if vtype is not None and vtype not in _VAR_TYPES:
+                problems.append(f"variable {item.get('name')!r}: unknown type {vtype!r}")
+    declared = _declared_types(doc)
 
     nodes: dict[str, dict[str, Any]] = {}
     for raw in doc.get("nodes") or []:
@@ -927,8 +1045,6 @@ def validate_document(
                             problems.append(
                                 f"node {node_id!r}: output name {name!r} must be a plain identifier"
                             )
-                if outputs is not None and scope != "isolated":
-                    problems.append(f"node {node_id!r}: flow outputs requires scope=isolated")
         if kind == "set":
             config = node.get("config") or {}
             if not isinstance(config, dict) or not str(config.get("var") or ""):
@@ -975,6 +1091,10 @@ def validate_document(
                 if not _looks_interpolated(config):
                     for field_problem in validate_against_schema(tool_obj.schema(), config):
                         problems.append(f"node {node_id!r}: {name}: {field_problem}")
+                if isinstance(config, dict):
+                    problems.extend(
+                        _ref_type_problems(node_id, name, tool_obj.schema(), config, declared)
+                    )
                 key = config.get("key") if isinstance(config, dict) else None
                 if isinstance(key, str) and key:
                     if selector_store is not None:

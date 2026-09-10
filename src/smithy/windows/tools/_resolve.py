@@ -92,7 +92,7 @@ async def resolve_element(config: dict[str, Any], *, strict: bool = False) -> An
         return None
 
     if strict:
-        matches = await run_blocking(selector.count_from_desktop, 2)
+        matches, element = await run_blocking(_find_strict, selector)
         if matches == 0:
             raise ElementNotFound(
                 "No element found matching selector",
@@ -105,4 +105,13 @@ async def resolve_element(config: dict[str, Any], *, strict: bool = False) -> An
                 param=None,
                 input_value=config,
             )
+        return element
     return await run_blocking(selector.find_from_desktop)
+
+
+def _find_strict(selector: ElementSelector) -> tuple[int, Any]:
+    """Count and resolve in one executor hop (no TOCTOU between them)."""
+    matches = selector.count_from_desktop(2)
+    if matches != 1:
+        return matches, None
+    return 1, selector.find_from_desktop()

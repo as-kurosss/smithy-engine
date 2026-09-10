@@ -83,23 +83,31 @@ class ControlActionTool(AbstractTool):
         return result
 
 
+def _pattern(element: Any, getter: str, action: str) -> Any:
+    pattern = getattr(element, getter, None)
+    if pattern is None:
+        raise PlatformError(f"The element does not expose the pattern required for '{action}'")
+    return pattern() if callable(pattern) else pattern
+
+
 def _apply_action(element: Any, action: str) -> dict[str, Any]:
     """Run the pattern call (runs in an executor)."""
     if action == "invoke":
-        element.Invoke()
+        _pattern(element, "GetInvokePattern", action).Invoke()
         return {}
     if action == "toggle":
-        element.Toggle()
-        state = getattr(element, "ToggleState", None)
+        pattern = _pattern(element, "GetTogglePattern", action)
+        pattern.Toggle()
+        state = getattr(pattern, "ToggleState", None)
         return {"toggle_state": str(state) if state is not None else None}
     if action == "expand":
-        element.Expand()
+        _pattern(element, "GetExpandCollapsePattern", action).Expand()
         return {}
     if action == "collapse":
-        element.Collapse()
+        _pattern(element, "GetExpandCollapsePattern", action).Collapse()
         return {}
     if action == "select":
-        element.Select()
+        _pattern(element, "GetSelectionItemPattern", action).Select()
         return {}
     element.SetFocus()
     return {}

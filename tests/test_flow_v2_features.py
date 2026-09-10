@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from smithy.core.assets import EnvAssetProvider
-from smithy.core.errors import ElementNotFound
+from smithy.core.errors import BusinessError, ElementNotFound, InfrastructureError
 from smithy.core.registry import ToolRegistry
 from smithy.core.selectors import SelectorStore
 from smithy.core.tool import AbstractTool, tool
@@ -444,6 +444,135 @@ class TestSubflows:
         with pytest.raises(FlowError, match="nesting"):
             await FlowRunner(_registry()).run(json.loads(path.read_text(encoding="utf-8")))
 
+    async def test_isolated_subflow_inputs_and_outputs(self) -> None:
+        sub = _doc(
+            [
+                {"id": "s", "kind": "start", "config": {}},
+                {
+                    "id": "sum",
+                    "kind": "tool",
+                    "tool": "test.add",
+                    "config": {"a": "$x", "b": 1},
+                    "save_as": "y",
+                },
+                {"id": "leak", "kind": "set", "config": {"var": "internal", "value": "secret"}},
+                {"id": "e", "kind": "end", "config": {}},
+            ],
+            _chain("s", "sum", "leak", "e"),
+        )
+        runner = FlowRunner(_registry(), variables={"x": 100, "seed": 41})
+        doc = _doc(
+            [
+                {"id": "s", "kind": "start", "config": {}},
+                {
+                    "id": "sub",
+                    "kind": "flow",
+                    "config": {
+                        "doc": sub,
+                        "scope": "isolated",
+                        "inputs": {"x": "$seed"},
+                        "outputs": {"result": "y"},
+                    },
+                },
+                {"id": "e", "kind": "end", "config": {}},
+            ],
+            _chain("s", "sub", "e"),
+        )
+        assert await runner.run(doc) == "finished"
+        assert runner._variables["result"] == 42
+        assert runner._variables["x"] == 100  # parent x is not shadowed by the child
+        assert "y" not in runner._variables  # undeclared child variable did not leak
+        assert "internal" not in runner._variables
+
+    async def test_isolated_outputs_accept_name_list(self) -> None:
+        sub = _doc(
+            [
+                {"id": "s", "kind": "start", "config": {}},
+                {"id": "set", "kind": "set", "config": {"var": "made", "value": 7}},
+                {"id": "e", "kind": "end", "config": {}},
+            ],
+            _chain("s", "set", "e"),
+        )
+        runner = FlowRunner(_registry())
+        doc = _doc(
+            [
+                {"id": "s", "kind": "start", "config": {}},
+                {
+                    "id": "sub",
+                    "kind": "flow",
+                    "config": {"doc": sub, "scope": "isolated", "outputs": ["made"]},
+                },
+                {"id": "e", "kind": "end", "config": {}},
+            ],
+            _chain("s", "sub", "e"),
+        )
+        assert await runner.run(doc) == "finished"
+        assert runner._variables["made"] == 7
+
+    async def test_outputs_without_isolated_scope_fails(self) -> None:
+        sub = _doc(
+            [
+                {"id": "s", "kind": "start", "config": {}},
+                {"id": "e", "kind": "end", "config": {}},
+            ],
+            _chain("s", "e"),
+        )
+        doc = _doc(
+            [
+                {"id": "s", "kind": "start", "config": {}},
+                {"id": "sub", "kind": "flow", "config": {"doc": sub, "outputs": ["x"]}},
+                {"id": "e", "kind": "end", "config": {}},
+            ],
+            _chain("s", "sub", "e"),
+        )
+        with pytest.raises(FlowError, match="isolated"):
+            await FlowRunner(_registry()).run(doc)
+
+
+# ------------------------------------------------------------------ fail node
+
+
+class TestFailNode:
+    async def test_business_fail_propagates_unwrapped(self) -> None:
+        doc = _doc(
+            [
+                {"id": "s", "kind": "start", "config": {}},
+                {
+                    "id": "bad",
+                    "kind": "fail",
+                    "config": {"mode": "business", "message": "amount is $amount"},
+                },
+                {"id": "e", "kind": "end", "config": {}},
+            ],
+            _chain("s", "bad", "e"),
+        )
+        with pytest.raises(BusinessError, match="amount is 0"):
+            await FlowRunner(_registry(), variables={"amount": 0}).run(doc)
+
+    async def test_system_fail_propagates(self) -> None:
+        doc = _doc(
+            [
+                {"id": "s", "kind": "start", "config": {}},
+                {"id": "bad", "kind": "fail", "config": {"mode": "system"}},
+                {"id": "e", "kind": "end", "config": {}},
+            ],
+            _chain("s", "bad", "e"),
+        )
+        with pytest.raises(InfrastructureError):
+            await FlowRunner(_registry()).run(doc)
+
+    async def test_bad_mode_is_a_flow_error(self) -> None:
+        doc = _doc(
+            [
+                {"id": "s", "kind": "start", "config": {}},
+                {"id": "bad", "kind": "fail", "config": {"mode": "nope"}},
+                {"id": "e", "kind": "end", "config": {}},
+            ],
+            _chain("s", "bad", "e"),
+        )
+        with pytest.raises(FlowError, match="mode"):
+            await FlowRunner(_registry()).run(doc)
+
 
 # ------------------------------------------------------------------ validation
 
@@ -483,6 +612,35 @@ class TestValidate:
         assert "'path' or 'doc'" in text
         assert "target 'ghost'" in text
         assert "source 'ghost'" in text
+
+    def test_flow_scope_and_outputs_are_validated(self) -> None:
+        doc = _doc(
+            [
+                {"id": "s", "kind": "start", "config": {}},
+                {
+                    "id": "sub",
+                    "kind": "flow",
+                    "config": {"doc": {}, "scope": "weird", "inputs": "no", "outputs": "no"},
+                },
+                {"id": "e", "kind": "end", "config": {}},
+            ],
+            _chain("s", "sub", "e"),
+        )
+        text = "\n".join(validate_document(doc))
+        assert "scope" in text
+        assert "'inputs' must be an object" in text
+        assert "'outputs' must be a list or object" in text
+
+    def test_fail_mode_is_validated(self) -> None:
+        doc = _doc(
+            [
+                {"id": "s", "kind": "start", "config": {}},
+                {"id": "bad", "kind": "fail", "config": {"mode": "nope"}},
+                {"id": "e", "kind": "end", "config": {}},
+            ],
+            _chain("s", "bad", "e"),
+        )
+        assert "fail mode" in "\n".join(validate_document(doc))
 
     def test_tool_schema_check(self) -> None:
         doc = _doc(

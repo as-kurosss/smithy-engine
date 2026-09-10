@@ -44,6 +44,7 @@ class EnvAssetProvider:
                 "prefix must be a non-empty string", param="prefix", input_value=prefix
             )
         self._prefix = prefix
+        self._cache: dict[str, str] = {}
 
     @property
     def prefix(self) -> str:
@@ -53,6 +54,10 @@ class EnvAssetProvider:
     def get(self, name: str) -> str:
         """Look up the env var for *name*.
 
+        Results are cached for the lifetime of the provider, so a bot
+        that fetches the same asset repeatedly pays the environment
+        lookup once.
+
         Raises:
             InvalidInput: If *name* is empty or the env var is not set.
         """
@@ -61,6 +66,9 @@ class EnvAssetProvider:
                 "asset name must be a non-empty string", param="name", input_value=name
             )
         key = self._prefix + re.sub(r"[^A-Z0-9]+", "_", name.strip().upper())
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
         value = os.environ.get(key)
         if value is None:
             raise InvalidInput(
@@ -68,4 +76,5 @@ class EnvAssetProvider:
                 param="name",
                 input_value=name,
             )
+        self._cache[key] = value
         return value

@@ -48,24 +48,41 @@ class RetryTool(AbstractTool):
         jitter: float = 0.0,
         retry_on: tuple[type[BaseException], ...] = (ElementNotFound,),
     ) -> None:
-        if attempts < 1:
+        if isinstance(attempts, bool) or not isinstance(attempts, int) or attempts < 1:
             raise InvalidInput(
-                f"attempts must be >= 1, got {attempts!r}", param="attempts", input_value=attempts
+                f"attempts must be an integer >= 1, got {attempts!r}",
+                param="attempts",
+                input_value=attempts,
             )
-        if delay_ms < 0:
+        if isinstance(delay_ms, bool) or not isinstance(delay_ms, (int, float)) or delay_ms < 0:
             raise InvalidInput(
-                f"delay_ms must be >= 0, got {delay_ms!r}", param="delay_ms", input_value=delay_ms
+                f"delay_ms must be a number >= 0, got {delay_ms!r}",
+                param="delay_ms",
+                input_value=delay_ms,
             )
-        if jitter < 0 or jitter > 1:
+        if (
+            isinstance(jitter, bool)
+            or not isinstance(jitter, (int, float))
+            or jitter < 0
+            or jitter > 1
+        ):
             raise InvalidInput(
-                f"jitter must be in [0, 1], got {jitter!r}", param="jitter", input_value=jitter
+                f"jitter must be a number in [0, 1], got {jitter!r}",
+                param="jitter",
+                input_value=jitter,
             )
-        if not retry_on:
-            raise InvalidInput("retry_on must list at least one exception type", param="retry_on")
+        if not retry_on or not all(
+            isinstance(item, type) and issubclass(item, BaseException) for item in retry_on
+        ):
+            raise InvalidInput(
+                "retry_on must list at least one exception type",
+                param="retry_on",
+                input_value=retry_on,
+            )
         self._tool = tool
         self._attempts = attempts
-        self._delay_ms = delay_ms
-        self._jitter = jitter
+        self._delay_ms = float(delay_ms)
+        self._jitter = float(jitter)
         self._retry_on = retry_on
 
     @property

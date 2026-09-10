@@ -115,7 +115,9 @@ class TestWaitDisappear:
             "find_from_desktop",
             side_effect=ElementNotFound("gone"),
         ):
-            result = await WaitTool().execute({"wait_for": "disappear", "timeout_ms": 500})
+            result = await WaitTool().execute(
+                {"wait_for": "disappear", "timeout_ms": 500, "name": "x"}
+            )
         assert result is True
 
     @pytest.mark.asyncio
@@ -124,9 +126,16 @@ class TestWaitDisappear:
 
         with patch.object(ElementSelector, "find_from_desktop", return_value=MagicMock()):
             result = await WaitTool().execute(
-                {"wait_for": "disappear", "timeout_ms": 60, "interval_ms": 50}
+                {"wait_for": "disappear", "timeout_ms": 60, "interval_ms": 50, "name": "x"}
             )
         assert result is False
+
+    @pytest.mark.asyncio
+    async def test_rejects_empty_selector(self) -> None:
+        from smithy.windows.tools.wait import WaitTool
+
+        with pytest.raises(InvalidInput, match="selector"):
+            await WaitTool().execute({"timeout_ms": 1000})
 
     @pytest.mark.asyncio
     async def test_rejects_bad_wait_for(self) -> None:
@@ -616,11 +625,11 @@ class TestHighlight:
 
 
 class TestFactoryAndFacade:
-    def test_factory_returns_23_tools(self) -> None:
+    def test_factory_returns_26_tools(self) -> None:
         from smithy.windows.tools import windows_tools
 
         tools = windows_tools()
-        assert len(tools) == 23
+        assert len(tools) == 26
         names = {t.name for t in tools}
         for expected in (
             "windows.scroll",
@@ -633,6 +642,9 @@ class TestFactoryAndFacade:
             "windows.clipboard",
             "windows.list_elements",
             "windows.highlight",
+            "windows.find_image",
+            "windows.click_image",
+            "windows.ocr",
         ):
             assert expected in names
 

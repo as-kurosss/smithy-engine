@@ -1,0 +1,17 @@
+{
+  "schema": "smithy-template-v1",
+  "title": "Notepad demo",
+  "description": "Opens Notepad, types your text, saves a screenshot and closes it.",
+  "category": "Demo",
+  "icon": "sticky-note",
+  "engine_version": ">=0.8.8",
+  "params": [
+    {
+      "name": "text",
+      "type": "string",
+      "label": "Text to type",
+      "default": "Hello from Smithy!",
+      "required": true
+    }
+  ]
+}

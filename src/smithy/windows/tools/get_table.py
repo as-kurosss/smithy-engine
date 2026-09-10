@@ -16,6 +16,7 @@ _CONTAINER_CONTROL_TYPES = frozenset(
 )
 _MAX_SCAN_DEPTH = 4
 _MAX_COLUMNS = 64
+_MAX_SIBLINGS = 100_000
 
 
 class GetTableTool(AbstractTool):
@@ -135,11 +136,15 @@ def _extract_table(element: Any, max_rows: int) -> tuple[list[str] | None, list[
     header: list[str] | None = None
     rows: list[list[str]] = []
     node = _safe(lambda: container.GetFirstChildControl())
-    while node is not None:
+    scanned = 0
+    while node is not None and scanned < _MAX_SIBLINGS:
+        scanned += 1
         ctype = _control_type(node)
         if ctype in _HEADER_CONTROL_TYPES and header is None:
             header = _read_cells(node)
-        elif ctype in _ROW_CONTROL_TYPES and len(rows) < max_rows:
+        elif ctype in _ROW_CONTROL_TYPES:
             rows.append(_read_cells(node))
+            if len(rows) >= max_rows:
+                break
         node = _safe(lambda n=node: n.GetNextSiblingControl())
     return header, rows

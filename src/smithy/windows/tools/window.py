@@ -25,8 +25,9 @@ _SW_MINIMIZE = 6
 _SW_MAXIMIZE = 3
 # WM_CLOSE message.
 _WM_CLOSE = 0x0010
-# SetWindowPos flags: keep Z order, keep size when only moving is not needed —
-# here position and size always come together, so just show the window.
+# SetWindowPos flags: no Z-order change (the comment above the call used to
+# promise this but omitted the flag, so windows were raised to the top).
+_SWP_NOZORDER = 0x0004
 _SWP_SHOWWINDOW = 0x0040
 
 
@@ -88,11 +89,7 @@ class WindowTool(AbstractTool):
 
         try:
             selector = ElementSelector().with_pid(pid)
-            control = await run_blocking(selector.find_from_desktop)
-            hwnd = getattr(control, "NativeWindowHandle", None)
-            if not hwnd:
-                raise PlatformError(f"No window handle for PID {pid}")
-            await run_blocking(_apply_action, hwnd, action, geometry)
+            await run_blocking(_window_action, selector, action, geometry)
         except (InvalidInput, ElementNotFound, PlatformError):
             raise
         except Exception as exc:
@@ -121,6 +118,19 @@ def _read_geometry(config: dict[str, Any]) -> tuple[int, int, int, int]:
     return (values[0], values[1], values[2], values[3])
 
 
+def _window_action(
+    selector: ElementSelector,
+    action: str,
+    geometry: tuple[int, int, int, int] | None,
+) -> None:
+    """Resolve the window and apply the action (runs in the UIA executor)."""
+    control = selector.find_from_desktop()
+    hwnd = getattr(control, "NativeWindowHandle", None)
+    if not hwnd:
+        raise PlatformError("No window handle found for the target process")
+    _apply_action(hwnd, action, geometry)
+
+
 def _user32() -> Any:
     """Win32 user32 handle (patchable seam for tests)."""
     import ctypes
@@ -130,9 +140,41 @@ def _user32() -> Any:
 
 def _apply_action(hwnd: int, action: str, geometry: tuple[int, int, int, int] | None) -> None:
     """Apply the Win32 call (runs in an executor)."""
+    import ctypes
+
     user32 = _user32()
+    user32.SetForegroundWindow.argtypes = [ctypes.c_void_p]
+    user32.SetForegroundWindow.restype = ctypes.c_bool
+    user32.ShowWindow.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    user32.ShowWindow.restype = ctypes.c_bool
+    user32.SetWindowPos.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_uint,
+    ]
+    user32.SetWindowPos.restype = ctypes.c_bool
+    user32.IsIconic.argtypes = [ctypes.c_void_p]
+    user32.IsIconic.restype = ctypes.c_bool
+    user32.PostMessageW.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_uint,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    user32.PostMessageW.restype = ctypes.c_bool
+
     if action == "activate":
-        user32.SetForegroundWindow(hwnd)
+        if user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, _SW_RESTORE)
+        if not user32.SetForegroundWindow(hwnd):
+            raise PlatformError(
+                "SetForegroundWindow was refused (another app owns the foreground); "
+                "retry after clicking the window or use the element's Invoke pattern"
+            )
     elif action == "minimize":
         user32.ShowWindow(hwnd, _SW_MINIMIZE)
     elif action == "maximize":
@@ -142,6 +184,6 @@ def _apply_action(hwnd: int, action: str, geometry: tuple[int, int, int, int] | 
     elif action == "move":
         assert geometry is not None
         x, y, width, height = geometry
-        user32.SetWindowPos(hwnd, None, x, y, width, height, _SWP_SHOWWINDOW)
+        user32.SetWindowPos(hwnd, None, x, y, width, height, _SWP_NOZORDER | _SWP_SHOWWINDOW)
     else:  # close
         user32.PostMessageW(hwnd, _WM_CLOSE, 0, 0)

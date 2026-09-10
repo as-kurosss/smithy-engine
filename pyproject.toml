@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "smithy-engine"
-version = "0.8.5"
+version = "0.8.10"
 description = "Free Python RPA engine — create automation bots with simple API"
 readme = "README.md"
 license = "MIT"
@@ -27,6 +27,10 @@ classifiers = [
 ]
 dependencies = []
 
+[project.scripts]
+smithy-run-flow = "smithy.run_flow:main"
+smithy-pack = "smithy.pack:_main"
+
 [project.urls]
 Homepage = "https://github.com/as-kurosss/smithy-engine"
 Repository = "https://github.com/as-kurosss/smithy-engine"
@@ -34,7 +38,7 @@ Changelog = "https://github.com/as-kurosss/smithy-engine/blob/master/CHANGELOG.m
 
 [project.optional-dependencies]
 windows = ["uiautomation>=2.0.29", "mss>=9", "Pillow>=10", "pyperclip>=1.8"]
-capture = ["pynput>=1.7", "pyperclip>=1.8"]
+capture = ["uiautomation>=2.0.29", "pynput>=1.7", "pyperclip>=1.8"]
 image = ["mss>=9", "Pillow>=10", "numpy>=1.24", "opencv-python>=4.8"]
 excel = ["openpyxl>=3.1"]
 all = [
@@ -62,6 +66,17 @@ packages = ["src/smithy"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.coverage.run]
+branch = true
+source = ["smithy"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
 
 [tool.ruff]
 line-length = 100

@@ -29,27 +29,27 @@ class SafeUIElement:
 
     async def get_name(self) -> str:
         """Get the element's name."""
-        return str(await run_blocking(self._element.Name))
+        return str(await run_blocking(lambda: self._element.Name))
 
     async def get_control_type(self) -> str:
         """Get the element's control type."""
-        return str(await run_blocking(self._element.ControlTypeName))
+        return str(await run_blocking(lambda: self._element.ControlTypeName))
 
     async def get_automation_id(self) -> str:
         """Get the element's automation ID."""
-        return str(await run_blocking(self._element.AutomationId))
+        return str(await run_blocking(lambda: self._element.AutomationId))
 
     async def get_class_name(self) -> str:
         """Get the element's class name."""
-        return str(await run_blocking(self._element.ClassName))
+        return str(await run_blocking(lambda: self._element.ClassName))
 
     async def get_pid(self) -> int:
         """Get the owning process ID."""
-        return int(await run_blocking(self._element.ProcessId))
+        return int(await run_blocking(lambda: self._element.ProcessId))
 
     async def get_rect(self) -> str:
         """Get the bounding rectangle as ``left,top,right,bottom``."""
-        rect = await run_blocking(self._element.BoundingRectangle)
+        rect = await run_blocking(lambda: self._element.BoundingRectangle)
         left = getattr(rect, "left", None)
         top = getattr(rect, "top", None)
         right = getattr(rect, "right", None)

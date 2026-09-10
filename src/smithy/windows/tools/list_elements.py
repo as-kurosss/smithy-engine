@@ -65,23 +65,22 @@ class ListElementsTool(AbstractTool):
                 input_value=max_items,
             )
 
-        def _collect_bounded() -> list[Any]:
-            """Walk children until *max_items*, avoiding a full enumeration."""
-            children: list[Any] = []
+        def _collect_bounded() -> list[dict[str, Any]]:
+            """Walk children until *max_items*, describing each in-apartment."""
+            items: list[dict[str, Any]] = []
             try:
                 child = element.GetFirstChildControl()
             except Exception:
-                return children
-            while child is not None and len(children) < max_items:
-                children.append(child)
+                return items
+            while child is not None and len(items) < max_items:
+                items.append(_describe(child))
                 try:
                     child = child.GetNextSiblingControl()
                 except Exception:
                     break
-            return children
+            return items
 
-        children = await run_blocking(_collect_bounded)
-        items = [_describe(child) for child in children]
+        items = await run_blocking(_collect_bounded)
         return {"items": items, "count": len(items)}
 
 

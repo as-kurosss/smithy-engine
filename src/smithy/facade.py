@@ -11,7 +11,7 @@ from typing import Any, Protocol
 from smithy.core.assets import AssetProvider, EnvAssetProvider
 from smithy.core.errors import ElementNotFound, InvalidInput
 from smithy.core.events import EventBus, Middleware, ToolEvent
-from smithy.core.redact import redact_value
+from smithy.core.redact import redact_text, redact_value
 from smithy.core.registry import ToolRegistry
 from smithy.core.selectors import SelectorStore
 from smithy.core.tool import Tool
@@ -75,7 +75,6 @@ class Smithy:
         self._assets: AssetProvider = assets if assets is not None else EnvAssetProvider()
         self._selector_store_path = selector_store
         self._selector_store: SelectorStore | None = None
-        self._active_key: str | None = None
         self._secrets: list[str] = []
         if dev_capture is None:
             dev_capture = os.environ.get("SMITHY_DEV_CAPTURE", "").strip().lower() in (
@@ -126,7 +125,9 @@ class Smithy:
         """
         self._event_bus.add_middleware(middleware)
 
-    async def _execute(self, tool_name: str, config: dict[str, Any]) -> Any:
+    async def _execute(
+        self, tool_name: str, config: dict[str, Any], *, selector_key: str | None = None
+    ) -> Any:
         """Execute a tool, capture timing, and emit event through middleware."""
         start = time.perf_counter()
         error: Exception | None = None
@@ -139,19 +140,36 @@ class Smithy:
         finally:
             elapsed_ms = (time.perf_counter() - start) * 1000
             metadata: dict[str, Any] = {}
-            if self._active_key is not None:
-                metadata["selector_key"] = self._active_key
-                self._active_key = None
+            if selector_key is not None:
+                metadata["selector_key"] = selector_key
             event = ToolEvent(
                 tool_name=tool_name,
                 config=redact_value(config, self._secrets),
                 result=redact_value(result, self._secrets),
-                error=error,
+                error=self._redacted_error(error),
                 duration_ms=elapsed_ms,
                 metadata=metadata,
             )
             await self._event_bus.emit(event)
         return result
+
+    def _redacted_error(self, error: Exception | None) -> Exception | None:
+        """Return *error* with asset values stripped from its message.
+
+        The caller still receives the original exception; only the event
+        (which middleware logs verbatim) gets the scrubbed copy.
+        """
+        if error is None or not self._secrets:
+            return error
+        message = str(error)
+        redacted = redact_text(message, self._secrets)
+        if redacted == message:
+            return error
+        try:
+            clone = type(error)(redacted)
+        except Exception:
+            clone = RuntimeError(redacted)
+        return clone
 
     def _store(self) -> SelectorStore:
         """Lazily create the selector store (default ``selectors.json``)."""
@@ -172,7 +190,6 @@ class Smithy:
         if entry is not None:
             for field_name, value in entry.items():
                 base.setdefault(field_name, value)
-            self._active_key = key
             return base
         if not self._dev_capture:
             raise InvalidInput(
@@ -185,7 +202,6 @@ class Smithy:
         captured = await capture_once_async()
         self._store().put(key, captured.selector)
         base.update(captured.selector)
-        self._active_key = key
         return base
 
     async def _execute_keyed(self, tool_name: str, config: dict[str, Any], key: str | None) -> Any:
@@ -197,7 +213,7 @@ class Smithy:
         honestly.
         """
         try:
-            return await self._execute(tool_name, config)
+            return await self._execute(tool_name, config, selector_key=key)
         except ElementNotFound:
             if key is None or not self._dev_capture:
                 raise
@@ -208,8 +224,7 @@ class Smithy:
             for field_name in ("name", "automation_id", "control_type", "class_name"):
                 config.pop(field_name, None)
             config.update(captured.selector)
-            self._active_key = key
-            return await self._execute(tool_name, config)
+            return await self._execute(tool_name, config, selector_key=key)
 
     async def process_run(self, command: str, **kwargs: Any) -> ProcessHandle:
         """Launch a process and return a handle with PID.

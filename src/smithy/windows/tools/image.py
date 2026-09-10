@@ -226,7 +226,10 @@ def _find_on_screen(
         else None
     )
     with mss.mss() as sct:
-        shot = sct.grab(monitor or sct.monitors[1])
+        grab_area = monitor or sct.monitors[1]
+        origin_x = int(grab_area.get("left", 0))
+        origin_y = int(grab_area.get("top", 0))
+        shot = sct.grab(grab_area)
         frame = numpy.frombuffer(shot.bgra, dtype=numpy.uint8)
         frame = frame.reshape(shot.height, shot.width, 4)[:, :, :3]
 
@@ -240,5 +243,10 @@ def _find_on_screen(
 
     result = cv2.matchTemplate(frame, tpl, cv2.TM_CCOEFF_NORMED)
     _, max_val, _, max_loc = cv2.minMaxLoc(result)
-    center = (int(max_loc[0] + tpl_width / 2), int(max_loc[1] + tpl_height / 2))
+    # max_loc is relative to the grabbed frame; add the region's screen
+    # origin so callers get absolute screen coordinates.
+    center = (
+        int(origin_x + max_loc[0] + tpl_width / 2),
+        int(origin_y + max_loc[1] + tpl_height / 2),
+    )
     return bool(max_val >= confidence), center, float(max_val)

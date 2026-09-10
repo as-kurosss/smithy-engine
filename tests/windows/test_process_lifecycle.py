@@ -131,6 +131,9 @@ class TestProcessStopDecoding:
             return _Done()
 
         monkeypatch.setattr("smithy.windows.tools.process.subprocess.run", fake_run)
+        monkeypatch.setattr(
+            "smithy.windows.tools.process._query_image_name", lambda pid: "notepad.exe"
+        )
         await ProcessTool().execute({"action": "stop", "pid": 4242})
         assert calls[0].get("errors") == "replace"
         assert calls[0].get("encoding") == "utf-8"

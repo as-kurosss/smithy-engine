@@ -42,9 +42,11 @@ def windows_tools(
     from smithy.windows.tools.get_text import GetTextTool
     from smithy.windows.tools.highlight import HighlightTool
     from smithy.windows.tools.hover import HoverTool
+    from smithy.windows.tools.image import ClickImageTool, FindImageTool
     from smithy.windows.tools.input_text import InputTextTool
     from smithy.windows.tools.keyboard import KeyboardTool
     from smithy.windows.tools.list_elements import ListElementsTool
+    from smithy.windows.tools.ocr import OcrTool
     from smithy.windows.tools.process import ProcessTool
     from smithy.windows.tools.screenshot import ScreenshotTool
     from smithy.windows.tools.scroll import ScrollTool
@@ -75,6 +77,9 @@ def windows_tools(
         HighlightTool(),
         GetTableTool(),
         ControlActionTool(),
+        FindImageTool(),
+        ClickImageTool(),
+        OcrTool(),
         FileTool(),
         ExcelTool(),
     ]

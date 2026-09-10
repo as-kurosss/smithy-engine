@@ -43,6 +43,7 @@ _T = TypeVar("_T")
 
 _executor_lock = threading.Lock()
 _executor: ThreadPoolExecutor | None = None
+_active_calls = 0
 
 
 def _default_timeout() -> float:
@@ -94,13 +95,33 @@ def _get_executor() -> ThreadPoolExecutor:
         return _executor
 
 
-def _abandon_executor() -> None:
-    """Drop the executor after a hung call (a fresh one is made lazily)."""
+def _abandon_executor() -> bool:
+    """Drop the executor after a hung call (a fresh one is made lazily).
+
+    Only safe when this call is the sole user of the executor: abandoning
+    it shuts down pending/running futures, so concurrent calls would see
+    ``CancelledError`` or ``RuntimeError``. Returns True when the executor
+    was actually abandoned.
+    """
     global _executor
     with _executor_lock:
-        if _executor is not None:
-            executor, _executor = _executor, None
+        if _executor is None or _active_calls > 1:
+            return False
+        executor, _executor = _executor, None
     executor.shutdown(wait=False)
+    return True
+
+
+def _enter_call() -> None:
+    global _active_calls
+    with _executor_lock:
+        _active_calls += 1
+
+
+def _exit_call() -> None:
+    global _active_calls
+    with _executor_lock:
+        _active_calls -= 1
 
 
 async def run_on_uia_thread(fn: Callable[..., _T], /, *args: Any, **kwargs: Any) -> _T:
@@ -112,8 +133,12 @@ async def run_on_uia_thread(fn: Callable[..., _T], /, *args: Any, **kwargs: Any)
     everything it touches shares the process-wide COM apartment.
     """
     loop = asyncio.get_running_loop()
-    future = loop.run_in_executor(_get_executor(), functools.partial(fn, *args, **kwargs))
-    return await future
+    _enter_call()
+    try:
+        future = loop.run_in_executor(_get_executor(), functools.partial(fn, *args, **kwargs))
+        return await future
+    finally:
+        _exit_call()
 
 
 async def run_blocking(
@@ -128,7 +153,8 @@ async def run_blocking(
     The thread owns a COM apartment for the whole process lifetime, so
     UIA elements created by one call stay valid for the next. After a
     timeout the thread is abandoned (hung calls are not interruptible)
-    and the next call gets a fresh thread.
+    and the next call gets a fresh thread — but only when no other call
+    is in flight, so a timeout can never cancel a concurrent call.
 
     Raises:
         PlatformError: If the call does not finish within *timeout* seconds
@@ -136,9 +162,17 @@ async def run_blocking(
     """
     limit = timeout if timeout is not None else _default_timeout()
     loop = asyncio.get_running_loop()
-    executor = _get_executor()
+    _enter_call()
     try:
-        future = loop.run_in_executor(executor, functools.partial(fn, *args, **kwargs))
+        executor = _get_executor()
+        try:
+            future = loop.run_in_executor(executor, functools.partial(fn, *args, **kwargs))
+        except RuntimeError:
+            # The executor was abandoned between _get_executor and submit
+            # (only possible if a concurrent call timed out). Retry once
+            # against the fresh executor.
+            executor = _get_executor()
+            future = loop.run_in_executor(executor, functools.partial(fn, *args, **kwargs))
         return await asyncio.wait_for(future, limit)
     except TimeoutError as exc:
         _abandon_executor()
@@ -147,3 +181,5 @@ async def run_blocking(
             f"blocking call {name} timed out after {limit:g}s "
             "(tune SMITHY_BLOCKING_TIMEOUT if this is expected)",
         ) from exc
+    finally:
+        _exit_call()

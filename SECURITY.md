@@ -13,27 +13,40 @@ version. You can expect an initial response within a few days.
 
 ## Trust model
 
-smithy is an RPA engine: **flow configs and tool configs are trusted code.**
-Tools can move the mouse, send keystrokes, read the clipboard, take
-screenshots, and (via `windows.process`) start allowlisted executables.
-Do not run flow files from untrusted sources, and do not point
-`HttpQueue` at servers you do not control.
+smithy is an RPA engine: **flow configs, tool configs and custom
+`tools.py` modules are trusted code.** Tools can move the mouse, send
+keystrokes, read the clipboard, take screenshots, and (via
+`windows.process`) start allowlisted executables. Packs are
+integrity-checked with SHA-256 but **not signed** (see the changelog),
+so only fetch them from an orchestrator you control. Do not run flow
+files from untrusted sources, and do not point `HttpQueue` at servers you
+do not control.
 
 Guardrails provided by the engine:
 
 - `windows.process` starts only executables matching the
   `SMITHY_ALLOWED_COMMANDS` allowlist (or the built-in default list);
-  bare command names are resolved via `PATH`, never the working directory.
-  Stopping a process by image *name* is subject to the same allowlist.
+  bare command names are resolved via `PATH`, never the working directory,
+  and a path-qualified command is accepted only when it is the same file
+  PATH resolution finds. Stopping by image *name* uses the same allowlist;
+  stopping by *PID* is allowed only when the target's image name is in the
+  allowlist.
 - `HttpQueue` refuses plain-HTTP base URLs unless `allow_insecure=True`
   (loopback addresses are always allowed). `pack fetch` applies the same
-  policy, caps download and uncompressed sizes, and rejects unsafe archive
-  members (traversal, NTFS alternate data streams, reserved device names).
+  policy, caps download and uncompressed sizes, rejects unsafe archive
+  members (traversal, NTFS alternate data streams, reserved device names),
+  extracts into a fresh staging directory, refuses extra files not listed
+  in the manifest, and does not follow redirects (so the Bearer token is
+  never replayed to another host).
+- Robot `config` files never hold secrets: `SMITHY_ASSET_*` (and other
+  framework `SMITHY_*` settings) are excluded from the env overlay, so
+  they cannot leak through `Config.to_dict()` / `repr()`.
 - Screenshot and file paths can be confined with `SMITHY_OUTPUT_ROOT` /
   `SMITHY_FILE_ROOT`.
 - Values fetched through `bot.asset(...)` / `${asset:...}` are redacted
-  from tool events, the JSONL audit log and traces. Put secrets behind an
-  asset reference — inline literals are not tracked.
+  from tool configs, results, error messages, the JSONL audit log and
+  traces. Put secrets behind an asset reference — inline literals are not
+  tracked.
 - The JSONL audit log records tool configs and results by default; use
   `JsonlEventLogger(path, include_config=False, include_result=False)` for
   data that must not be persisted.

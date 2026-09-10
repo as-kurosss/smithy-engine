@@ -152,13 +152,22 @@ class ExcelTool(AbstractTool):
                 )
             from openpyxl import Workbook
 
-            workbook = Workbook()
-            worksheet = workbook.active if sheet is None else workbook.create_sheet(sheet)
-            assert worksheet is not None
-            for row in rows:
-                worksheet.append(row)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            workbook.save(str(path))
+            try:
+                workbook = Workbook()
+                worksheet = workbook.active
+                assert worksheet is not None
+                if sheet is not None:
+                    # Rename the default sheet instead of adding a second
+                    # one, so the workbook does not carry an empty "Sheet".
+                    worksheet.title = sheet
+                for row in rows:
+                    worksheet.append(row)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                workbook.save(str(path))
+            except PlatformError:
+                raise
+            except Exception as exc:
+                raise PlatformError(f"Cannot write workbook {path}: {exc}", source=exc) from exc
             return len(rows)
 
         written = await run_blocking(_write_sync)

@@ -99,12 +99,37 @@ def normalize_keys(text: str) -> str:
 
 
 _TAP_RE = re.compile(r"<tap:(\w+)>")
+#: Hold/special key tokens produced by ``normalize_keys`` (``{CTRL}`` …).
+_HOLD_RE = re.compile(r"\{(\w+)\}")
 
 # INPUT structures for SendInput (Win32).
 _INPUT_KEYBOARD = 1
+_INPUT_MOUSE = 0
 _KEYEVENTF_EXTENDEDKEY = 0x0001
 _KEYEVENTF_KEYUP = 0x0002
 _KEYEVENTF_UNICODE = 0x0004
+
+_ULONG_PTR = ctypes.c_ulonglong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_ulong
+
+#: Keys that must be sent with KEYEVENTF_EXTENDEDKEY (navigation cluster and
+#: a few others); modifiers must NOT use it or they become the right-hand
+#: variants / numpad keys.
+_EXTENDED_KEYS: frozenset[int] = frozenset(
+    {
+        _VK_MAP["LEFT"],
+        _VK_MAP["UP"],
+        _VK_MAP["RIGHT"],
+        _VK_MAP["DOWN"],
+        _VK_MAP["INSERT"],
+        _VK_MAP["DELETE"],
+        _VK_MAP["HOME"],
+        _VK_MAP["END"],
+        _VK_MAP["PAGEUP"],
+        _VK_MAP["PAGEDOWN"],
+        _VK_MAP["NUMLOCK"],
+        _VK_MAP["PRINTSCREEN"],
+    }
+)
 
 
 class _KEYBDINPUT(ctypes.Structure):
@@ -113,12 +138,31 @@ class _KEYBDINPUT(ctypes.Structure):
         ("wScan", ctypes.c_ushort),
         ("dwFlags", ctypes.c_ulong),
         ("time", ctypes.c_ulong),
-        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+        ("dwExtraInfo", _ULONG_PTR),
+    ]
+
+
+class _MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", ctypes.c_long),
+        ("dy", ctypes.c_long),
+        ("mouseData", ctypes.c_ulong),
+        ("dwFlags", ctypes.c_ulong),
+        ("time", ctypes.c_ulong),
+        ("dwExtraInfo", _ULONG_PTR),
+    ]
+
+
+class _HARDWAREINPUT(ctypes.Structure):
+    _fields_ = [
+        ("uMsg", ctypes.c_ulong),
+        ("wParamL", ctypes.c_ushort),
+        ("wParamH", ctypes.c_ushort),
     ]
 
 
 class _InputUnion(ctypes.Union):
-    _fields_ = [("ki", _KEYBDINPUT)]
+    _fields_ = [("ki", _KEYBDINPUT), ("mi", _MOUSEINPUT), ("hi", _HARDWAREINPUT)]
 
 
 class _INPUT(ctypes.Structure):
@@ -129,27 +173,31 @@ def _tap_key(name: str) -> None:
     """Quick press-and-release of a key via SendInput."""
     upper = name.upper()
     if upper in _VK_MAP:
-        # Special / modifier key — use VK code with ExtendedKey flag.
         vk = _VK_MAP[upper]
-        extended = _KEYEVENTF_EXTENDEDKEY
-        key_up = _KEYEVENTF_KEYUP
-        _send_keybd(vk, 0, extended)
-        _send_keybd(vk, 0, extended | key_up)
+        flags = _KEYEVENTF_EXTENDEDKEY if vk in _EXTENDED_KEYS else 0
+        _send_keybd(vk, 0, flags)
+        _send_keybd(vk, 0, flags | _KEYEVENTF_KEYUP)
     elif len(name) == 1:
-        # Single character — use Unicode input.
         _send_unicode(name)
     else:
         raise ValueError(f"Unknown key: {name!r}")
     time.sleep(0.01)
 
 
+def _send_input(inp: _INPUT) -> None:
+    sent = ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
+    if sent != 1:
+        raise PlatformError("SendInput failed (the target may be elevated or blocked)")
+
+
 def _send_keybd(vk: int, scan: int, flags: int) -> None:
-    """Send a single keybd_event via SendInput."""
-    inp = _INPUT(
-        _INPUT_KEYBOARD,
-        _InputUnion(ki=_KEYBDINPUT(vk, scan, flags, 0, None)),
+    """Send a single keybd event via SendInput."""
+    _send_input(
+        _INPUT(
+            _INPUT_KEYBOARD,
+            _InputUnion(ki=_KEYBDINPUT(vk, scan, flags, 0, 0)),
+        )
     )
-    ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
 
 
 def _send_unicode(char: str) -> None:
@@ -161,16 +209,18 @@ def _send_unicode(char: str) -> None:
     encoded = char.encode("utf-16-le")
     for offset in range(0, len(encoded), 2):
         scan = encoded[offset] | (encoded[offset + 1] << 8)
-        down = _INPUT(
-            _INPUT_KEYBOARD,
-            _InputUnion(ki=_KEYBDINPUT(0, scan, _KEYEVENTF_UNICODE, 0, None)),
+        _send_input(
+            _INPUT(
+                _INPUT_KEYBOARD,
+                _InputUnion(ki=_KEYBDINPUT(0, scan, _KEYEVENTF_UNICODE, 0, 0)),
+            )
         )
-        up = _INPUT(
-            _INPUT_KEYBOARD,
-            _InputUnion(ki=_KEYBDINPUT(0, scan, _KEYEVENTF_UNICODE | _KEYEVENTF_KEYUP, 0, None)),
+        _send_input(
+            _INPUT(
+                _INPUT_KEYBOARD,
+                _InputUnion(ki=_KEYBDINPUT(0, scan, _KEYEVENTF_UNICODE | _KEYEVENTF_KEYUP, 0, 0)),
+            )
         )
-        ctypes.windll.user32.SendInput(1, ctypes.byref(down), ctypes.sizeof(down))
-        ctypes.windll.user32.SendInput(1, ctypes.byref(up), ctypes.sizeof(up))
 
 
 def send_literal_text(text: str) -> None:
@@ -192,20 +242,39 @@ def send_literal_text(text: str) -> None:
 
 
 def _send(text: str) -> None:
-    """Send keystrokes — tap keys via SendInput, rest via SendKeys."""
+    """Send keystrokes — tap keys and literals via SendInput, holds via SendKeys.
+
+    Plain text is typed literally (so ``%``, ``+``, ``^`` are data), while
+    ``{CTRL}``-style hold tokens keep SendKeys' modifier semantics.
+    """
     import uiautomation as auto
 
     parts = _TAP_RE.split(text)
     for i, part in enumerate(parts):
         if not part:
             continue
-        if i % 2 == 0:
-            # Plain text or hold-mode keys ({CTRL} etc.)
-            if part:
-                auto.SendKeys(part)
-        else:
-            # Tap key
+        if i % 2 == 1:
             _tap_key(part)
+        else:
+            _send_segment(part, auto)
+
+
+def _send_segment(part: str, auto: Any) -> None:
+    """Type a non-tap segment, preserving only known ``{KEY}`` hold tokens."""
+    position = 0
+    for match in _HOLD_RE.finditer(part):
+        literal = part[position : match.start()]
+        if literal:
+            send_literal_text(literal)
+        token = match.group(1)
+        if token.upper() in _VK_MAP or len(token) == 1:
+            auto.SendKeys(match.group(0))
+        else:
+            send_literal_text(match.group(0))
+        position = match.end()
+    tail = part[position:]
+    if tail:
+        send_literal_text(tail)
 
 
 class KeyboardTool(AbstractTool):
@@ -275,7 +344,14 @@ class KeyboardTool(AbstractTool):
 
         element = await resolve_element(config)
         if element is not None:
-            await run_blocking(element.SetFocus)
+            try:
+                await run_blocking(element.SetFocus)
+            except Exception as exc:
+                raise PlatformError(
+                    f"Cannot focus the target element before sending keys: {exc}",
+                    source=exc,
+                    input_value=raw,
+                ) from exc
 
         try:
             await run_blocking(_send, keys)

@@ -26,14 +26,18 @@ zip → upload to smithy-cloud (``POST /packs/{name}/versions/{version}``).
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
+import os
 import re
+import shutil
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
 import zipfile
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -41,9 +45,22 @@ from smithy.core.errors import InvalidInput
 
 PACK_MANIFEST = "pack.json"
 PACK_SCHEMA = "smithy-pack-v1"
+TEMPLATE_FILE = "template.json"
+TEMPLATE_SCHEMA = "smithy-template-v1"
+TEMPLATE_PARAM_TYPES = (
+    "string",
+    "number",
+    "integer",
+    "bool",
+    "file",
+    "folder",
+    "asset",
+    "choice",
+)
 
 _RETRYABLE_STATUS: frozenset[int] = frozenset({502, 503, 504})
 _RETRY_BASE_SECONDS = 0.5
+_MAX_RETRY_BACKOFF_SECONDS = 30.0
 
 #: Hard cap for a downloaded/uploaded pack and for its uncompressed size
 #: on disk — a bound against memory exhaustion and zip bombs.
@@ -60,37 +77,70 @@ _WINDOWS_RESERVED_NAMES: frozenset[str] = frozenset(
     }
 )
 
-#: Machine-local/runtime files — never checksummed.
-_IGNORED_PATTERNS: tuple[str, ...] = (
-    PACK_MANIFEST,
-    "robot.toml",
-    # ``main.py`` is the old bundle's runner shim; packs are flow-only and
-    # the agent runs the flow itself, so it never ships.
-    "main.py",
-    "__pycache__",
-    # environments, VCS and tool caches — machine-local, never shipped
-    ".venv",
-    "venv",
-    ".git",
-    ".idea",
-    ".vscode",
-    ".pytest_cache",
-    ".mypy_cache",
-    ".ruff_cache",
-    "node_modules",
-    "*.pyc",
-    "*.db",
-    "*.sqlite*",
-    "*.jsonl",
-    "*.log",
-    "*.tmp",
+#: Directory names skipped anywhere inside a pack (VCS, envs, caches).
+_IGNORED_DIR_NAMES: frozenset[str] = frozenset(
+    {
+        "__pycache__",
+        ".venv",
+        "venv",
+        ".git",
+        ".idea",
+        ".vscode",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        "node_modules",
+    }
 )
+
+#: Machine-local files skipped only at the pack root.
+_IGNORED_ROOT_FILES: frozenset[str] = frozenset({PACK_MANIFEST, "robot.toml", "main.py"})
+
+#: Globs skipped anywhere (runtime state, bytecode).
+_IGNORED_GLOBS: tuple[str, ...] = ("*.pyc", "*.db", "*.sqlite*", "*.jsonl", "*.log", "*.tmp")
+
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects so a Bearer token is never replayed to another host."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        raise urllib.error.HTTPError(
+            req.full_url, code, f"redirect to {newurl!r} is not allowed", headers, fp
+        )
+
+
+_OPENER = urllib.request.build_opener(_NoRedirectHandler)
+
+
+def _backoff(attempt: int) -> float:
+    return float(min(_RETRY_BASE_SECONDS * 2**attempt, _MAX_RETRY_BACKOFF_SECONDS))
 
 
 def _is_ignored(path: Path, root: Path) -> bool:
     rel = path.relative_to(root)
-    return any(pattern in path.parts or rel.match(pattern) for pattern in _IGNORED_PATTERNS)
+    if any(part in _IGNORED_DIR_NAMES for part in rel.parts):
+        return True
+    if rel.as_posix() in _IGNORED_ROOT_FILES:
+        return True
+    return any(rel.match(pattern) for pattern in _IGNORED_GLOBS)
+
+
+def _unsafe_rel(rel: str) -> bool:
+    """True when a manifest path could escape the pack root."""
+    if not rel or rel.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", rel):
+        return True
+    parts = [part for part in rel.replace("\\", "/").split("/") if part not in ("", ".")]
+    return any(part == ".." for part in parts)
 
 
 def _sha256(path: Path) -> str:
@@ -114,8 +164,9 @@ def build_pack(
         directory: Pack folder (flows, ``selectors.json``, ``tools.py``, …).
         name: Pack name (e.g. ``"1c-invoices"``).
         version: Pack version (e.g. ``"1.2.0"``).
-        entry: Stage → flow file mapping (e.g. ``{"process": "process.flow.json"}``).
-            When omitted, conventional files are picked up automatically
+        entry: Stage → flow file mapping (e.g. ``{"process": "flow.json"}``).
+            When omitted, a single ``flow.json`` is used as the ``process``
+            stage; otherwise conventional staged files are picked up
             (``init.flow.json`` / ``process.flow.json`` / ``end.flow.json``).
 
     Raises:
@@ -134,8 +185,17 @@ def build_pack(
             for stage in ("init", "process", "end")
             if (root / f"{stage}.flow.json").exists()
         }
+        # Preferred modern layout: a single ``flow.json`` is the main stage.
+        if "process" not in entry and (root / "flow.json").is_file():
+            entry["process"] = "flow.json"
     for stage, flow_path in entry.items():
-        if not (root / flow_path).is_file():
+        if _unsafe_rel(str(flow_path)):
+            raise InvalidInput(
+                f"entry {stage!r} has an unsafe path: {flow_path}",
+                param="entry",
+                input_value=flow_path,
+            )
+        if not (root / str(flow_path)).is_file():
             raise InvalidInput(
                 f"entry {stage!r} points to a missing file: {flow_path}",
                 param="entry",
@@ -159,9 +219,93 @@ def build_pack(
         "entry": entry,
         "files": files,
     }
+    template = load_template(root)
+    if template is not None:
+        manifest["template"] = _template_summary(template)
     manifest_path = root / PACK_MANIFEST
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     return manifest_path
+
+
+def load_template(directory: str | Path) -> dict[str, Any] | None:
+    """Read ``template.json`` from *directory* (``None`` when absent).
+
+    Raises:
+        InvalidInput: When the file exists but is not a JSON object or
+            fails :func:`validate_template`.
+    """
+    path = Path(directory) / TEMPLATE_FILE
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise InvalidInput(f"cannot read {TEMPLATE_FILE}: {exc}", param="template") from exc
+    if not isinstance(data, dict):
+        raise InvalidInput(f"{TEMPLATE_FILE} must be a JSON object", param="template")
+    problems = validate_template(data)
+    if problems:
+        raise InvalidInput(
+            f"{TEMPLATE_FILE} is invalid:\n" + "\n".join(f"  - {item}" for item in problems),
+            param="template",
+        )
+    return data
+
+
+def validate_template(data: dict[str, Any]) -> list[str]:
+    """Check a template descriptor; return human-readable problems.
+
+    A template is a pack that advertises the parameters it needs, so a
+    catalog can prompt for them. ``title`` is required; each entry of
+    ``params`` needs a unique ``name`` and one of :data:`TEMPLATE_PARAM_TYPES`.
+    """
+    problems: list[str] = []
+    schema = data.get("schema")
+    if schema is not None and schema != TEMPLATE_SCHEMA:
+        problems.append(f"unknown template schema {schema!r}")
+    title = data.get("title") or data.get("name")
+    if not isinstance(title, str) or not title.strip():
+        problems.append("template needs a non-empty 'title'")
+    params = data.get("params", [])
+    if not isinstance(params, list):
+        return problems + ["'params' must be a list"]
+    seen: set[str] = set()
+    for index, param in enumerate(params):
+        if not isinstance(param, dict):
+            problems.append(f"param #{index} must be an object")
+            continue
+        name = param.get("name")
+        if not isinstance(name, str) or not name:
+            problems.append(f"param #{index} needs a non-empty 'name'")
+        elif name in seen:
+            problems.append(f"duplicate param name {name!r}")
+        else:
+            seen.add(name)
+        ptype = param.get("type")
+        if ptype is not None and ptype not in TEMPLATE_PARAM_TYPES:
+            problems.append(f"param {name!r}: unknown type {ptype!r}")
+    return problems
+
+
+def _template_summary(template: dict[str, Any]) -> dict[str, Any]:
+    """A small catalog entry embedded in ``pack.json`` (no unzip needed)."""
+    summary: dict[str, Any] = {}
+    for key in ("title", "description", "category", "icon", "engine_version"):
+        value = template.get(key)
+        if value is not None:
+            summary[key] = value
+    params = template.get("params")
+    if isinstance(params, list):
+        summary["params"] = [
+            {
+                key: param[key]
+                for key in ("name", "type", "label", "required", "default")
+                if key in param
+            }
+            for param in params
+            if isinstance(param, dict)
+        ]
+    return summary
 
 
 def verify_pack(directory: str | Path) -> list[str]:
@@ -191,6 +335,9 @@ def verify_pack(directory: str | Path) -> list[str]:
             continue
         rel = str(item.get("path") or "")
         checksum = str(item.get("sha256") or "")
+        if _unsafe_rel(rel):
+            problems.append(f"manifest entry {rel!r}: unsafe path")
+            continue
         if not rel or not _SHA256_RE.match(checksum):
             problems.append(f"manifest entry {rel!r}: missing path or bad sha256")
             continue
@@ -203,6 +350,19 @@ def verify_pack(directory: str | Path) -> list[str]:
 
     if not listed:
         problems.append("manifest lists no files")
+
+    # Any file present on disk but absent from the manifest is not covered
+    # by the integrity check (e.g. a stale/planted tools.py) — reject it.
+    on_disk = {
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*")
+        if path.is_file() and not _is_ignored(path, root)
+    }
+    for rel in sorted(on_disk - set(listed)):
+        problems.append(
+            f"file present but not in the manifest: {rel} "
+            "(stale or planted file — rebuild the pack)"
+        )
 
     for stage, flow_path in (manifest.get("entry") or {}).items():
         if flow_path not in listed:
@@ -275,6 +435,18 @@ def zip_pack(directory: str | Path, *, out: str | Path | None = None) -> Path:
 # ------------------------------------------------------------------ publishing
 
 
+def _multipart_body(archive: Path, boundary: str) -> Iterator[bytes]:
+    """Yield a multipart/form-data body without buffering the whole file."""
+    yield (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="{archive.name}"\r\n'
+        f"Content-Type: application/zip\r\n\r\n"
+    ).encode()
+    with archive.open("rb") as fh:
+        yield from iter(lambda: fh.read(65536), b"")
+    yield f"\r\n--{boundary}--\r\n".encode()
+
+
 def _upload_pack(
     url: str,
     archive: Path,
@@ -286,9 +458,11 @@ def _upload_pack(
 ) -> None:
     """Multipart-POST *archive* to the orchestrator (stdlib urllib only).
 
-    Retried with exponential backoff on connection failures and 502/503/504;
-    meaningful answers (400/401/409/413/422) surface immediately with the
-    server's detail message.
+    The body is streamed in chunks (no 2× file-size buffer) and the
+    response is read with a small cap. Retried with exponential backoff
+    on connection failures and 502/503/504; meaningful answers
+    (400/401/409/413/422) surface immediately with the server's detail.
+    Redirects are refused so the Bearer token is never replayed elsewhere.
     """
     size = archive.stat().st_size
     if size > max_bytes:
@@ -298,35 +472,32 @@ def _upload_pack(
             input_value=str(archive),
         )
     boundary = uuid.uuid4().hex
-    data = archive.read_bytes()
-    body = (
+    prefix_len = len(
         (
             f"--{boundary}\r\n"
             f'Content-Disposition: form-data; name="file"; filename="{archive.name}"\r\n'
             f"Content-Type: application/zip\r\n\r\n"
         ).encode()
-        + data
-        + f"\r\n--{boundary}--\r\n".encode()
     )
-    request = urllib.request.Request(
-        url,
-        data=body,
-        method="POST",
-        headers={
-            "Content-Type": f"multipart/form-data; boundary={boundary}",
-            "Authorization": f"Bearer {token}",
-        },
-    )
+    suffix_len = len(f"\r\n--{boundary}--\r\n".encode())
+    headers = {
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+        "Authorization": f"Bearer {token}",
+        "Content-Length": str(prefix_len + size + suffix_len),
+    }
     attempt = 0
     while True:
+        request = urllib.request.Request(
+            url, data=_multipart_body(archive, boundary), method="POST", headers=headers
+        )
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 — https enforced by caller, loopback http allowed
-                response.read()
+            with _OPENER.open(request, timeout=timeout) as response:
+                response.read(4096)
             return
         except urllib.error.HTTPError as exc:
             try:
                 if exc.code in _RETRYABLE_STATUS and attempt < max_retries:
-                    time.sleep(_RETRY_BASE_SECONDS * 2**attempt)
+                    time.sleep(_backoff(attempt))
                     attempt += 1
                     continue
                 detail = exc.read().decode("utf-8", errors="replace")
@@ -336,9 +507,14 @@ def _upload_pack(
             finally:
                 exc.close()
             raise InvalidInput(message, param="api_url", input_value=url) from exc
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            OSError,
+            http.client.HTTPException,
+        ) as exc:
             if attempt < max_retries:
-                time.sleep(_RETRY_BASE_SECONDS * 2**attempt)
+                time.sleep(_backoff(attempt))
                 attempt += 1
                 continue
             raise InvalidInput(
@@ -467,25 +643,32 @@ def _safe_extract(
                 sink.write(chunk)
 
 
-def _read_capped(response: Any, limit: int) -> bytes:
-    """Read an HTTP response body, aborting past *limit* bytes."""
+def _download_to_file(response: Any, target: Path, limit: int) -> None:
+    """Stream an HTTP response to *target*, aborting past *limit* bytes."""
     length = response.headers.get("Content-Length")
     if length is not None and length.isdigit() and int(length) > limit:
         raise InvalidInput(
             f"pack download is {length} bytes, over the {limit}-byte cap",
             param="source",
         )
-    chunks: list[bytes] = []
     total = 0
-    while True:
-        chunk = response.read(65536)
-        if not chunk:
-            break
-        total += len(chunk)
-        if total > limit:
-            raise InvalidInput(f"pack download exceeds the {limit}-byte cap", param="source")
-        chunks.append(chunk)
-    return b"".join(chunks)
+    with target.open("wb") as sink:
+        while True:
+            chunk = response.read(65536)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > limit:
+                raise InvalidInput(f"pack download exceeds the {limit}-byte cap", param="source")
+            sink.write(chunk)
+
+
+def manifest_lists_file(manifest: dict[str, Any], rel: str) -> bool:
+    """True when *rel* is checksummed in *manifest* (used to gate tools.py)."""
+    for item in manifest.get("files") or []:
+        if isinstance(item, dict) and str(item.get("path") or "") == rel:
+            return True
+    return False
 
 
 def fetch_pack(
@@ -494,6 +677,8 @@ def fetch_pack(
     *,
     allow_insecure: bool = False,
     max_bytes: int = DEFAULT_MAX_PACK_BYTES,
+    timeout: float = 60.0,
+    max_retries: int = 3,
 ) -> Path:
     """Download/locate a pack zip, extract and verify it into *dest*.
 
@@ -501,7 +686,9 @@ def fetch_pack(
     local path to a zip. Plain http to a non-loopback host is rejected
     (the manifest inside the archive cannot protect against a MITM who
     controls both files), unless *allow_insecure* is set. Downloads and
-    uncompressed output are capped at *max_bytes*. After extraction the
+    uncompressed output are capped at *max_bytes*. Extraction happens in
+    a fresh staging directory that replaces *dest*, so stale or planted
+    files (e.g. an old ``tools.py``) never survive. After extraction the
     manifest is verified; a tampered archive raises before anything runs.
 
     Returns:
@@ -512,16 +699,41 @@ def fetch_pack(
     """
     import contextlib
 
-    dest_dir = Path(dest)
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    tmp_zip: Path | None = None
+    dest_dir = Path(dest).resolve()
+    staging = dest_dir.with_name(f"{dest_dir.name}.staging-{uuid.uuid4().hex[:8]}")
+    staging.mkdir(parents=True)
     try:
         if re.match(r"^https?://", source):
             _check_api_url(source, allow_insecure=allow_insecure, label="source")
-            with urllib.request.urlopen(source, timeout=60) as response:  # noqa: S310 — scheme policy enforced above
-                data = _read_capped(response, max_bytes)
-            tmp_zip = dest_dir / ".pack-download.tmp"
-            tmp_zip.write_bytes(data)
+            tmp_zip = staging / ".pack-download.tmp"
+            attempt = 0
+            while True:
+                try:
+                    with _OPENER.open(source, timeout=timeout) as response:
+                        _download_to_file(response, tmp_zip, max_bytes)
+                    break
+                except urllib.error.HTTPError as exc:
+                    exc.close()
+                    if exc.code in _RETRYABLE_STATUS and attempt < max_retries:
+                        time.sleep(_backoff(attempt))
+                        attempt += 1
+                        continue
+                    raise InvalidInput(
+                        f"pack download failed with HTTP {exc.code}", param="source"
+                    ) from exc
+                except (
+                    urllib.error.URLError,
+                    TimeoutError,
+                    OSError,
+                    http.client.HTTPException,
+                ) as exc:
+                    if attempt < max_retries:
+                        time.sleep(_backoff(attempt))
+                        attempt += 1
+                        continue
+                    raise InvalidInput(
+                        f"pack download failed: {exc}", param="source", input_value=source
+                    ) from exc
             archive_path: Path = tmp_zip
         else:
             archive_path = Path(source)
@@ -530,23 +742,29 @@ def fetch_pack(
                     f"pack archive not found: {source}", param="source", input_value=source
                 )
         with zipfile.ZipFile(archive_path) as archive:
-            _safe_extract(archive, dest_dir, max_uncompressed=max_bytes)
+            _safe_extract(archive, staging, max_uncompressed=max_bytes)
     except zipfile.BadZipFile as exc:
+        shutil.rmtree(staging, ignore_errors=True)
         raise InvalidInput(
             f"pack archive is not a valid zip: {source}", param="source", input_value=source
         ) from exc
-    finally:
-        if tmp_zip is not None:
-            with contextlib.suppress(OSError):
-                tmp_zip.unlink()
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
 
-    problems = verify_pack(dest_dir)
+    problems = verify_pack(staging)
     if problems:
+        shutil.rmtree(staging, ignore_errors=True)
         raise InvalidInput(
             "fetched pack failed verification:\n" + "\n".join(f"  - {item}" for item in problems),
             param="pack",
             input_value=str(dest_dir),
         )
+    # Replace the destination only after a fully verified extract.
+    with contextlib.suppress(OSError):
+        if dest_dir.exists():
+            shutil.rmtree(dest_dir)
+    os.replace(staging, dest_dir)
     return dest_dir
 
 

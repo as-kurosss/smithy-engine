@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 from collections.abc import Iterable
-from pathlib import PureWindowsPath
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from smithy.core.blocking import run_blocking
@@ -63,25 +63,62 @@ def _resolve_command_path(command: str) -> str:
     would shadow the system one. Resolving explicitly (and refusing when
     the name is not on ``PATH``) closes that hole.
 
+    A path-qualified command is accepted only when it resolves to the
+    same file that a bare-name ``PATH`` lookup of its basename finds —
+    otherwise ``C:\\temp\\notepad.exe`` could run an attacker binary that
+    merely shares a basename with an allowlisted command.
+
     Raises:
-        InvalidInput: If the bare name is not found on ``PATH``.
+        InvalidInput: If the name is not found on ``PATH``, or a
+            path-qualified command is not the on-``PATH`` executable.
     """
     if "\\" in command or "/" in command:
-        return command
+        candidate = Path(command)
+        if not candidate.is_absolute():
+            candidate = Path.cwd() / candidate
+        if not candidate.is_file():
+            raise InvalidInput(
+                f"Command '{command}' does not exist",
+                param="command",
+                input_value=command,
+            )
+        try:
+            on_path = _resolve_command_path(candidate.name)
+        except InvalidInput as exc:
+            raise InvalidInput(
+                f"Command '{command}' is not available on PATH (refusing a "
+                "path-qualified executable that PATH does not expose)",
+                param="command",
+                input_value=command,
+            ) from exc
+        if candidate.resolve() != Path(on_path).resolve():
+            raise InvalidInput(
+                f"Command '{command}' is not the on-PATH '{candidate.name}' "
+                "(refusing a possibly planted executable)",
+                param="command",
+                input_value=command,
+            )
+        return str(candidate.resolve())
     pathext = os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(";")
     exts = [""] if any(command.lower().endswith(ext.lower()) for ext in pathext) else pathext
     for directory in os.environ.get("PATH", "").split(os.pathsep):
         if not directory:
             continue
         for ext in exts:
-            candidate = os.path.join(directory, command + ext)
-            if os.path.isfile(candidate):
-                return candidate
+            candidate_path = os.path.join(directory, command + ext)
+            if os.path.isfile(candidate_path):
+                return candidate_path
     raise InvalidInput(
         f"Command '{command}' not found on PATH",
         param="command",
         input_value=command,
     )
+
+
+def _system32(*parts: str) -> str:
+    """Absolute path under ``%SystemRoot%\\System32`` (no PATH lookups)."""
+    root = os.environ.get("SYSTEMROOT", r"C:\Windows")
+    return os.path.join(root, "System32", *parts)
 
 
 class ProcessTool(AbstractTool):
@@ -264,10 +301,19 @@ async def _action_stop(config: dict[str, Any], allowed: frozenset[str]) -> dict[
     if pid is not None:
 
         def _stop_by_pid() -> None:
+            image = _query_image_name(pid)
+            if not _is_command_allowed(image, allowed):
+                raise InvalidInput(
+                    f"Refusing to stop pid {pid} ({image!r}): its executable is not "
+                    "in the allowed list",
+                    param="pid",
+                    input_value=pid,
+                )
             result = subprocess.run(
-                ["taskkill", "/F", "/PID", str(pid)],
+                [_system32("taskkill.exe"), "/F", "/PID", str(pid)],
                 capture_output=True,
                 text=True,
+                timeout=30,
                 # The agent forces PYTHONUTF8=1, but taskkill writes the
                 # console OEM codepage; strict UTF-8 decoding would raise in
                 # the reader thread. Replace is enough — the text is only
@@ -291,9 +337,10 @@ async def _action_stop(config: dict[str, Any], allowed: frozenset[str]) -> dict[
 
     def _stop_by_name() -> None:
         result = subprocess.run(
-            ["taskkill", "/F", "/IM", name],
+            [_system32("taskkill.exe"), "/F", "/IM", name],
             capture_output=True,
             text=True,
+            timeout=30,
             # Same OEM-codepage caveat as _stop_by_pid above.
             encoding="utf-8",
             errors="replace",
@@ -305,6 +352,35 @@ async def _action_stop(config: dict[str, Any], allowed: frozenset[str]) -> dict[
 
     await run_blocking(_stop_by_name)
     return {"status": "stopped", "method": "name", "name": name}
+
+
+def _query_image_name(pid: int) -> str:
+    """Return the executable basename of *pid* (runs in an executor).
+
+    Raises:
+        PlatformError: If the process is gone or access is denied.
+    """
+    import ctypes
+    import ctypes.wintypes
+
+    kernel32 = ctypes.windll.kernel32
+    kernel32.OpenProcess.argtypes = [
+        ctypes.wintypes.DWORD,
+        ctypes.wintypes.BOOL,
+        ctypes.wintypes.DWORD,
+    ]
+    kernel32.OpenProcess.restype = ctypes.wintypes.HANDLE
+    handle = kernel32.OpenProcess(_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        raise PlatformError(f"Cannot inspect pid {pid} (it may not exist or access is denied)")
+    try:
+        size = ctypes.wintypes.DWORD(32768)
+        buffer = ctypes.create_unicode_buffer(size.value)
+        if not kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):
+            raise PlatformError(f"Cannot read the image name of pid {pid}")
+        return PureWindowsPath(buffer.value).name.lower()
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def _check_pid(config: dict[str, Any]) -> int:
@@ -334,6 +410,7 @@ _SYNCHRONIZE = 0x00100000
 _QUERY_LIMITED_INFORMATION = 0x1000
 _WAIT_OBJECT_0 = 0
 _WAIT_TIMEOUT = 0x102
+_ERROR_ACCESS_DENIED = 5
 
 
 async def _action_wait(config: dict[str, Any]) -> dict[str, Any]:
@@ -382,13 +459,21 @@ async def _action_status(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def _query_status(pid: int) -> tuple[bool, int | None]:
-    """Read process liveness (runs in an executor)."""
+    """Read process liveness (runs in an executor).
+
+    Raises:
+        PlatformError: If the process exists but access is denied
+            (distinguishable from "not running").
+    """
     import ctypes
     import ctypes.wintypes
 
     kernel32 = ctypes.windll.kernel32
     handle = kernel32.OpenProcess(_QUERY_LIMITED_INFORMATION, False, pid)
     if not handle:
+        last_error = getattr(kernel32, "GetLastError", lambda: 0)()
+        if last_error == _ERROR_ACCESS_DENIED:
+            raise PlatformError(f"Access denied opening pid {pid} (elevated/protected)")
         return False, None
     try:
         exit_code = ctypes.wintypes.DWORD()

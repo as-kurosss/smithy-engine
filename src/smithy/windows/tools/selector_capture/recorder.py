@@ -84,6 +84,7 @@ class SeriesEvent:
     """Events emitted by the series (auto-record) listener."""
 
     kind: Literal["stop", "mouse_down", "input"]
+    char: str | None = None
 
 
 # ── Input helpers ────────────────────────────────────────────────────────────
@@ -116,6 +117,27 @@ def _is_printable(key: Any) -> bool:
             _kb.Key.tab,
         )
     return isinstance(key, _kb.KeyCode) and key.char is not None
+
+
+def _event_char(key: Any) -> str:
+    """Return the character *key* would type (``""`` if not printable).
+
+    ``backspace`` is reported as ``"\\b"`` so recorders can edit the buffer.
+    """
+    if _kb is None:
+        return ""
+    if key == _kb.Key.space:
+        return " "
+    if key == _kb.Key.tab:
+        return "\t"
+    if key == _kb.Key.enter:
+        return "\n"
+    if key == _kb.Key.backspace:
+        return "\b"
+    if isinstance(key, _kb.KeyCode) and key.char is not None:
+        char = key.char
+        return char if isinstance(char, str) else ""
+    return ""
 
 
 # ── Listener factories ───────────────────────────────────────────────────────
@@ -208,7 +230,7 @@ def _series_listener(out: queue.Queue[SeriesEvent]) -> _kb.Listener:
             out.put(SeriesEvent("stop"))
             return
         if not ctrl and not alt and _is_printable(key):
-            out.put(SeriesEvent("input"))
+            out.put(SeriesEvent("input", _event_char(key)))
 
     def on_release(key: Any) -> None:
         nonlocal ctrl, shift, alt

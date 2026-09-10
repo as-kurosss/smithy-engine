@@ -69,6 +69,7 @@ class JsonlEventLogger:
         self._file: TextIO = self._path.open("a", encoding="utf-8")
         self._lines: queue.Queue[str | None] = queue.Queue(maxsize=max(1, max_queue))
         self._dropped = 0
+        self._stop = threading.Event()
         self._writer = threading.Thread(
             target=self._write_loop, name="smithy-jsonl-logger", daemon=True
         )
@@ -79,19 +80,30 @@ class JsonlEventLogger:
         """Number of records dropped because the write queue was full."""
         return self._dropped
 
+    def _write_line(self, line: str) -> None:
+        try:
+            self._file.write(line)
+            self._file.flush()
+        except Exception:
+            logger.exception("audit log write to %s failed", self._path)
+
     def _write_loop(self) -> None:
         while True:
-            line = self._lines.get()
+            try:
+                line = self._lines.get(timeout=0.1)
+            except queue.Empty:
+                if self._stop.is_set():
+                    return
+                continue
             if line is None:
                 return
-            try:
-                self._file.write(line)
-                self._file.flush()
-            except Exception:
-                logger.exception("audit log write to %s failed", self._path)
+            self._write_line(line)
 
     async def __call__(self, event: ToolEvent) -> ToolEvent | None:
         """Enqueue *event* for writing and pass it down the pipeline."""
+        if self._stop.is_set():
+            self._dropped += 1
+            return event
         error = event.error
         record: dict[str, Any] = {
             "ts": event.timestamp.isoformat(),
@@ -125,9 +137,28 @@ class JsonlEventLogger:
         return event
 
     def close(self) -> None:
-        """Drain pending writes, flush and close the underlying file."""
-        self._lines.put(None)
+        """Drain pending writes, flush and close the underlying file.
+
+        Never blocks indefinitely: if the writer thread does not stop
+        within a few seconds (hung disk/network share) the file is left
+        open rather than closed out from under a live writer.
+        """
+        self._stop.set()
         self._writer.join(timeout=5.0)
+        if self._writer.is_alive():
+            logger.warning(
+                "audit log writer for %s did not stop within 5s; "
+                "leaving the file open to avoid corrupting writes",
+                self._path,
+            )
+            return
+        while True:
+            try:
+                line = self._lines.get_nowait()
+            except queue.Empty:
+                break
+            if line is not None:
+                self._write_line(line)
         self._file.close()
 
     def __enter__(self) -> JsonlEventLogger:

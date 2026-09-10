@@ -31,6 +31,9 @@ from smithy.core.tool import AbstractTool
 # script text — so user-controlled values cannot inject PowerShell.
 _OCR_SCRIPT = r"""
 $ErrorActionPreference = 'Stop'
+# Force UTF-8 on stdout so non-ASCII OCR text survives the pipe.
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
 $null = [Windows.Media.Ocr.OcrEngine, Windows.Foundation, ContentType = WindowsRuntime]
 $null = [Windows.Graphics.Imaging.BitmapDecoder, Windows.Foundation, ContentType = WindowsRuntime]
@@ -189,28 +192,38 @@ def _capture_region(region: tuple[int, int, int, int]) -> Path:
     return path
 
 
+def _powershell_exe() -> str:
+    """Absolute path to Windows PowerShell (never a PATH lookup)."""
+    root = os.environ.get("SYSTEMROOT", r"C:\Windows")
+    candidate = Path(root) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    return str(candidate) if candidate.is_file() else "powershell.exe"
+
+
 def _recognize(image_path: Path, language: str) -> str:
     """Run the PowerShell OCR script (runs in an executor)."""
     env = dict(os.environ)
     env["SMITHY_OCR_PATH"] = str(image_path)
     env["SMITHY_OCR_LANG"] = language
-    completed = subprocess.run(
-        [
-            "powershell.exe",
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            _OCR_SCRIPT,
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        encoding="utf-8",
-        errors="replace",
-        env=env,
-    )
+    try:
+        completed = subprocess.run(
+            [
+                _powershell_exe(),
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                _OCR_SCRIPT,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise PlatformError("Windows OCR timed out after 60s") from exc
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout).strip()
         raise PlatformError(f"Windows OCR failed: {detail}")

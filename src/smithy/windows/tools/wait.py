@@ -111,24 +111,30 @@ class WaitTool(AbstractTool):
 
         selector = ElementSelector.from_config(config)
         if selector is None:
-            selector = ElementSelector()
+            raise InvalidInput(
+                "No selector provided: pass at least one of name, automation_id, "
+                "control_type, class_name or pid",
+                param=None,
+                input_value=config,
+            )
 
         deadline = asyncio.get_running_loop().time() + (timeout_ms / 1000)
         interval = interval_ms / 1000
         ever_resolved = False
         while True:
+            present: bool | None
             try:
                 await run_blocking(selector.find_from_desktop)
-                missing = False
+                present = True
                 ever_resolved = True
             except ElementNotFound:
-                missing = True
+                present = False
                 ever_resolved = True
             except PlatformError:
-                # Transient UIA hiccup — keep polling as if still present.
-                missing = False
+                # Transient UIA hiccup — we cannot tell whether it is there.
+                present = None
 
-            if (wait_for == "disappear") == missing:
+            if present is not None and (wait_for == "appear") == present:
                 return True
 
             if asyncio.get_running_loop().time() >= deadline:

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import tomllib
+from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any
 
@@ -25,10 +26,19 @@ _RESERVED_ENV_KEYS: frozenset[str] = frozenset(
         "blocking_timeout",
         "allowed_commands",
         "output_root",
+        "file_root",
         "dev_capture",
         "selector_store",
+        "ocr_path",
+        "ocr_lang",
     }
 )
+
+#: Prefixes of framework ``SMITHY_*`` namespaces that must never be
+#: copied into the config document. ``asset_*`` is the secret store
+#: (``EnvAssetProvider``) — leaking it into ``to_dict()``/``repr()``
+#: would defeat the "secrets never live in config" guarantee.
+_RESERVED_ENV_PREFIXES: tuple[str, ...] = ("asset_",)
 
 
 class Config:
@@ -101,12 +111,19 @@ def _parse_env_value(raw: str) -> Any:
     """Interpret an env value with TOML scalar syntax; fall back to string.
 
     ``"8080"`` becomes ``8080``, ``"true"`` becomes ``True``,
-    ``"C:\\temp"`` (not valid TOML) stays a plain string.
+    ``"C:\\temp"`` (not valid TOML) stays a plain string. Date/time
+    scalars, ``nan`` and ``inf`` are rejected — an env override should
+    not silently change a string into a date or a non-finite float.
     """
     try:
-        return tomllib.loads(f"value = {raw}")["value"]
+        value = tomllib.loads(f"value = {raw}")["value"]
     except ValueError:
         return raw
+    if isinstance(value, (date, datetime, time)):
+        return raw
+    if isinstance(value, float) and not (value == value and abs(value) != float("inf")):
+        return raw
+    return value
 
 
 def _deep_set(document: dict[str, Any], parts: list[str], value: Any) -> None:
@@ -136,6 +153,8 @@ def _apply_env_overlay(document: dict[str, Any], prefix: str) -> None:
             continue
         rest = name[len(prefix) :].lower()
         if not rest or rest in _RESERVED_ENV_KEYS:
+            continue
+        if rest.startswith(_RESERVED_ENV_PREFIXES):
             continue
         _deep_set(document, rest.split("__"), _parse_env_value(raw))
 

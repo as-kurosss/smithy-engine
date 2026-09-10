@@ -111,21 +111,21 @@ class TestControlAction:
                 _fake_resolve(element),
             )
             result = await ControlActionTool().execute({"action": "invoke", "name": "OK"})
-        element.Invoke.assert_called_once_with()
+        element.GetInvokePattern.return_value.Invoke.assert_called_once_with()
         assert result["status"] == "performed"
         assert result["action"] == "invoke"
 
     @pytest.mark.asyncio
     async def test_toggle_reports_state(self) -> None:
         element = MagicMock()
-        element.ToggleState = "On"
+        element.GetTogglePattern.return_value.ToggleState = "On"
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
                 "smithy.windows.tools.control_action.resolve_element",
                 _fake_resolve(element),
             )
             result = await ControlActionTool().execute({"action": "toggle", "name": "cb"})
-        element.Toggle.assert_called_once_with()
+        element.GetTogglePattern.return_value.Toggle.assert_called_once_with()
         assert result["toggle_state"] == "On"
 
     @pytest.mark.asyncio
@@ -143,7 +143,7 @@ class TestControlAction:
     @pytest.mark.asyncio
     async def test_pattern_failure_wrapped(self) -> None:
         element = MagicMock()
-        element.Invoke.side_effect = Exception("COMError: pattern unsupported")
+        element.GetInvokePattern.side_effect = Exception("COMError: pattern unsupported")
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
                 "smithy.windows.tools.control_action.resolve_element",

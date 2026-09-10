@@ -260,9 +260,23 @@ All three modes write the same shape — `{"tool": "selector-capture",
 "nodes": [{"tool", "args", "full_path"}]}` (`single` is just a
 one-node flow). `args` holds the ranked minimal selector (the
 `best_selector` equivalent), `full_path` the full UIA path for debugging
-and anchors. Note: series mode records click targets with full paths,
-but keyboard input captures only the target element, not the typed text
-itself — fill in `text` afterwards or use record mode.
+and anchors. The CLI series mode records click targets but not typed
+text — fill in `text` afterwards, or use the programmatic recorder.
+
+### Record → flow (text included)
+
+`record_series` is the same recorder driven by a `threading.Event`
+instead of a hotkey, so a server can start/stop it and get a runnable
+flow back — typed text **is** preserved:
+
+```python
+import threading
+from smithy.windows.tools.selector_capture import nodes_to_flow, record_series
+
+stop = threading.Event()
+nodes = record_series(stop, on_step=print)   # click around, type, then: stop.set()
+flow = nodes_to_flow(nodes, name="recorded")  # flow-v2 document
+```
 
 ## Codegen (Playwright-style code recording)
 
@@ -285,9 +299,11 @@ editor, fill in the TODOs, run.
 
 ## Visual Editor
 
-The flow is built in [smithy-designer](https://github.com/as-kurosss/smithy-engine-designer) —
+The flow is built in [smithy-designer](https://github.com/as-kurosss/smithy-designer) —
 a separate visual editor (MIT): drag-and-drop canvas, step debugger with
-breakpoints, XML-like selectors, typed variables.
+breakpoints, XML-like selectors, typed variables. Click **Record**, perform
+the actions on the desktop (clicks + typed text are captured), and the
+recording lands on the canvas as a runnable flow.
 
 ```bash
 pip install smithy-designer
@@ -326,6 +342,31 @@ Example:
 }
 ```
 
+### Subflows (decomposition)
+
+A `flow` node calls another flow document — reusable logic kept out of the
+main graph. The main entry is `flow.json`; put reusable units under
+`flows/` and reference them by path (relative to the pack directory):
+
+```json
+{
+  "id": "login", "kind": "flow",
+  "config": {
+    "path": "flows/login.flow.json",
+    "scope": "isolated",
+    "inputs": { "user": "$username" },
+    "outputs": { "session": "token" }
+  }
+}
+```
+
+- `scope: "shared"` (default) — the child shares the parent's variables.
+- `scope: "isolated"` — the child gets only `inputs` (interpolated in the
+  parent); `outputs` maps `{parent: child}` (or a list of same-named
+  variables) back. Child temporaries never leak into the parent.
+- `config.doc` inlines a subflow document instead of `path`.
+- Nesting is capped (depth 8) to stop runaway recursion.
+
 ### Running a flow
 
 ```bash
@@ -347,33 +388,29 @@ python -m smithy.run_flow flow.json --transactional --queue invoices --cloud URL
 
 Or programmatically: `smithy.flow.FlowRunner(registry).run(doc)`.
 
-### Process bundle contract
+### Delivery contract (packs)
 
-A flow runs unattended on any orchestrator/agent as a plain Python bundle:
+Packs are **flow-only**: the agent runs the flow itself, so no `main.py`
+runner shim is shipped. `smithy.pack build` writes a `pack.json` manifest
+(SHA-256 per file) and `smithy.pack push` uploads the archive; agents
+fetch and verify it with `smithy.pack fetch`:
 
-```text
-files:        { "flow.json": <v2 doc>, "main.py": <runner shim> }
-entry_point:  main.py
-requirements: ["smithy-engine[windows]>=0.7"]
+```bash
+python -m smithy.pack build ./my-pack --name invoices --version 1.0.0
+python -m smithy.pack push  ./my-pack --name invoices --version 1.0.0
+python -m smithy.pack fetch https://host/api/packs/invoices/versions/1.0.0 --dest ./pack
+python -m smithy.run_flow --pack ./pack --stage process
 ```
 
-with the shim being two lines:
-
-```python
-from smithy.run_flow import main
-sys.exit(main(["flow.json"]))
-```
-
-The agent executes it exactly like any other Python program — no orchestrator
-changes are needed. `python -m smithy_designer.publish flow.web.json --url
-<cloud> --token sct_...` builds and uploads this bundle for you.
+Manifests are SHA-256 integrity-checked but not signed; only fetch packs
+from an orchestrator you control.
 
 ## Install
 
 ```bash
 pip install smithy-engine             # core (no deps)
 pip install smithy-engine[windows]     # Windows UIA tools
-pip install smithy-engine[capture]     # selector capture (pynput + pyperclip)
+pip install smithy-engine[capture]     # selector capture (uiautomation + pynput + pyperclip)
 pip install smithy-engine[all]         # everything
 pip install -e ".[dev]"            # development
 ```
@@ -415,6 +452,8 @@ src/smithy/
 │   ├── config.py        — TOML robot config + SMITHY_* env overlay
 │   ├── assets.py        — AssetProvider protocol, SMITHY_ASSET_* (runtime secrets)
 │   ├── files.py         — FileTool (SMITHY_FILE_ROOT sandbox)
+│   ├── blocking.py      — run_blocking: COM apartment worker + timeout
+│   ├── redact.py        — secret redaction helpers
 │   ├── excel.py         — ExcelTool (openpyxl)
 │   ├── queue.py         — Queue protocol, InMemoryQueue, SqliteQueue
 │   ├── http_queue.py    — HttpQueue client for the orchestrator

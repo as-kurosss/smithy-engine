@@ -1,5 +1,143 @@
 # Changelog
 
+## 0.8.10 - 2026-09-10
+
+Fail node: business vs system failure from a flow.
+
+### Added
+
+- **`fail` node.** `{"kind": "fail", "config": {"mode": "business" | "system",
+  "message": "..."}}` ends the run with `BusinessError` (bad data, terminal,
+  recorded `business_failed`) or `InfrastructureError` (system failure,
+  retried within the queue budget). This makes REFramework-style business
+  failures expressible from a flow, not just from Python. Domain errors now
+  propagate unwrapped to the transaction runner; the CLI reports them cleanly.
+
+## 0.8.9 - 2026-09-10
+
+Subflows with isolated in/out variables.
+
+### Added
+
+- **`flow` nodes support `"scope": "isolated"`** with `inputs` and
+  `outputs`. In isolated mode the child flow gets only the declared
+  `inputs` (interpolated in the parent) and returns only the declared
+  `outputs` (`{parent: child}` dict, or a list of same-named variables);
+  child temporaries no longer leak into the parent. The default scope is
+  `"shared"` (previous behaviour) for compatibility.
+
+### Fixed
+
+- **Inline subflow docs are no longer rewritten by parent interpolation.**
+  Only `path`/`inputs` are interpolated now; an inline `doc` is evaluated
+  in the child scope, so `$var` inside the subflow resolves correctly
+  under isolated scope.
+
+## 0.8.8 - 2026-09-10
+
+Template packs: a pack can advertise itself as a reusable blueprint.
+
+### Added
+
+- **`template.json`** — an optional descriptor in a pack folder
+  (`title`, `description`, `category`, `icon`, `engine_version`, and
+  `params[]` of `string/number/integer/bool/file/folder/asset/choice`).
+  `build_pack` validates it and embeds a compact summary under the
+  manifest's `template` key, so a catalog can list templates without
+  unzipping. Exposed as `smithy.load_template` / `smithy.validate_template`.
+- **`flow.json` is the preferred main flow name.** When a pack has no
+  staged `init/process/end.flow.json`, a single `flow.json` is used as the
+  `process` stage — so the entry file reads naturally while the stage
+  contract is unchanged.
+
+## 0.8.7 - 2026-09-10
+
+Record → flow: turn a live desktop session into a runnable flow document.
+
+### Added
+
+- **`record_series(stop, on_step=None)`** — a programmatic series recorder
+  driven by a `threading.Event` instead of the Ctrl+Shift+F2 hotkey, so a
+  server (the designer) can start/stop it over HTTP. Exported from
+  `smithy.windows.tools.selector_capture`.
+- **Typed text is captured.** The series listener now carries the typed
+  character (`SeriesEvent.char`); printable keys are buffered and flushed
+  into a `windows.input_text` node (with the element selector) on the next
+  click or on stop. `backspace` edits the buffer. The CLI series mode keeps
+  working unchanged.
+- **`nodes_to_flow(nodes, name=None)`** — chains recorded `{tool, args}`
+  nodes into a flow-v2 document (`start → step N → end`) that the designer
+  can open and the engine can replay.
+
+## 0.8.6 - 2026-09-10
+
+A hardening pass after a full re-audit: fixes silent-failure and
+security gaps found in the core runtime, the flow runner, pack delivery
+and the Windows tools.
+
+### Security
+
+- **`SMITHY_ASSET_*` no longer leaks into the robot config.** The env
+  overlay now excludes the asset namespace and framework settings, so
+  `Config.to_dict()` / `repr(config)` can never expose secrets.
+- **`file list` can no longer escape the sandbox.** Glob patterns
+  containing `..`, a drive or an absolute root are rejected.
+- **`windows.process` path-qualified commands are validated.** A
+  path-qualified executable is accepted only when it is the same file a
+  bare-name `PATH` lookup finds, so `C:\temp\notepad.exe` cannot shadow
+  the allowlisted `notepad.exe`. Stopping by PID now also requires the
+  target image name to be allowlisted, and `taskkill` /
+  `powershell.exe` are invoked by absolute `System32` path with a
+  timeout.
+- **`pack` rejects extra files.** Anything on disk but absent from the
+  manifest (e.g. a stale/planted `tools.py`) fails verification;
+  `fetch_pack` extracts into a fresh staging directory, and manifest
+  paths are checked for traversal. HTTP redirects are refused so the
+  Bearer token is never replayed to another host.
+- **Asset values are redacted from tool error messages** (not just
+  config/result), closing a leak through `JsonlEventLogger`.
+- **Flow `error` edges now execute**, so a documented recovery branch is
+  no longer silently dead; required node fields (`if.condition`,
+  `loop.mode`, `set.var`) are validated.
+
+### Fixed
+
+- **`windows.input_text` / `keyboard` actually type.** The `INPUT`
+  struct for `SendInput` was 32 bytes instead of the native 40, so every
+  `SendInput` call failed with `ERROR_INVALID_PARAMETER` and the error
+  was ignored. The struct (with `MOUSEINPUT`) and the return value are
+  now correct; keyboard literal segments bypass SendKeys syntax, and the
+  extended-key flag is applied only to the navigation cluster.
+- **Flow cycles can no longer hang the agent.** The runner enforces a
+  step cap, detects nodes without ids and dangling edge targets, and no
+  longer reuses a previous run's edges when a document omits them.
+- **`control_action` uses real UIA pattern APIs** (`GetInvokePattern`,
+  `GetTogglePattern`, `GetExpandCollapsePattern`, `GetSelectionItemPattern`)
+  instead of non-existent `Invoke`/`Toggle`/`Expand`/`Collapse` methods.
+- **`windows.wait` no longer treats a UIA error as "present"**, and an
+  empty selector is rejected instead of matching the first desktop child.
+- **`list_elements` / `window` respect COM thread affinity** — all
+  control property reads happen on the UIA worker thread; window
+  `activate` reports failure, restores minimized windows, and `move`
+  keeps Z-order.
+- `image` search returns absolute screen coordinates (the region origin
+  is added); `get_table` stops walking siblings once `max_rows` is
+  reached; OCR sets UTF-8 console encoding; screenshot forces the
+  extension to match the requested format.
+- `run_flow --transactional` now applies `--set`/`--vars`/`--payload`,
+  the pack's `selectors.json` and `--capture`; `--validate` uses the
+  pack's selector store and skips schema checks for interpolated fields.
+- Core: `blocking` no longer cancels concurrent calls when one times
+  out; queues deep-copy payloads, compare SQLite leases with `julianday`,
+  and gained `purge_terminal()`; `HttpQueue` URL-encodes ids, caches the
+  engine version and wraps malformed responses; `JsonlEventLogger.close()`
+  cannot deadlock; `transactions` bounds the async heartbeat join;
+  `ExcelTool` no longer leaves an empty default sheet; the tracer caps
+  and throttles writes and never bakes PIDs.
+- Packaging: added `LICENSE`, fixed the `capture` extra (adds
+  `uiautomation`), added console scripts, coverage config, and the
+  missing image/OCR tools to the default Windows factory.
+
 ## 0.8.5 - 2026-09-10
 
 ### Security

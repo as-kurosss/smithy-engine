@@ -24,6 +24,7 @@ from smithy.core.queue import (
 )
 from smithy.core.retry import RetryTool
 from smithy.core.schema import validate_against_schema
+from smithy.core.selectors import SelectorStore
 from smithy.core.tool import AbstractTool, Tool, tool
 from smithy.core.transactions import (
     ItemOutcome,
@@ -33,7 +34,26 @@ from smithy.core.transactions import (
     run_transactions,
     run_transactions_async,
 )
-from smithy.facade import ClickResult, ProcessHandle, Smithy
+from smithy.facade import (
+    ClickResult,
+    InputTextResult,
+    ProcessHandle,
+    SetTextResult,
+    Smithy,
+)
+from smithy.flow import FlowError, FlowRunner
+from smithy.pack import (
+    PACK_MANIFEST,
+    TEMPLATE_FILE,
+    build_pack,
+    fetch_pack,
+    load_manifest,
+    load_template,
+    publish_pack,
+    validate_template,
+    verify_pack,
+    zip_pack,
+)
 
 try:
     from importlib.metadata import PackageNotFoundError
@@ -41,7 +61,7 @@ try:
 
     __version__ = _pkg_version("smithy-engine")
 except PackageNotFoundError:  # pragma: no cover — running from an uninstalled tree
-    __version__ = "0.8.5"
+    __version__ = "0.8.10"
 
 __all__ = [
     "AbstractTool",
@@ -52,30 +72,45 @@ __all__ = [
     "Config",
     "ConfigError",
     "ElementNotFound",
+    "FlowError",
+    "FlowRunner",
     "HttpQueue",
     "HttpQueueError",
     "InMemoryQueue",
+    "InputTextResult",
     "InvalidInput",
     "ItemOutcome",
     "JsonlEventLogger",
     "LeaseRenewable",
+    "PACK_MANIFEST",
     "PlatformError",
     "ProcessHandle",
     "Queue",
     "QueueInfo",
     "QueueItem",
     "RetryTool",
+    "SelectorStore",
+    "SetTextResult",
     "Smithy",
     "SqliteQueue",
     "InfrastructureError",
+    "TEMPLATE_FILE",
     "Tool",
     "ToolError",
     "TransactionContextMiddleware",
     "TransactionReport",
+    "build_pack",
     "current_transaction_id",
+    "fetch_pack",
     "load_config",
+    "load_manifest",
+    "load_template",
+    "publish_pack",
     "run_transactions",
     "run_transactions_async",
     "tool",
     "validate_against_schema",
+    "validate_template",
+    "verify_pack",
+    "zip_pack",
 ]

@@ -387,6 +387,15 @@ def run_transactions(
                 beat.start()
                 report.heartbeat_active = True
             result = process_fn(item)
+            if inspect.isawaitable(result):
+                close = getattr(result, "close", None)
+                if callable(close):
+                    close()
+                raise InvalidInput(
+                    "process_fn returned an awaitable; use run_transactions_async for "
+                    "async business logic",
+                    param="process_fn",
+                )
             if result is not None and not isinstance(result, dict):
                 raise InvalidInput(
                     f"process_fn must return a dict or None, got {type(result).__name__}",
@@ -569,7 +578,16 @@ async def run_transactions_async(
         finally:
             if beat_task is not None:
                 stop_beat.set()
-                await beat_task
+                try:
+                    await asyncio.wait_for(beat_task, _HEARTBEAT_JOIN_TIMEOUT_SECONDS)
+                except TimeoutError:
+                    logger.warning(
+                        "lease heartbeat for %s did not stop within %gs; "
+                        "abandoning it (the claim outcome is recorded regardless)",
+                        item.id,
+                        _HEARTBEAT_JOIN_TIMEOUT_SECONDS,
+                    )
+                    beat_task.cancel()
             current_transaction_id.reset(token)
         if reset:
             consecutive = 0

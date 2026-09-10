@@ -104,9 +104,9 @@ class ScreenshotTool(AbstractTool):
                 input_value=fmt,
             )
 
-        # Ensure the file extension matches the requested format
-        if save_path.suffix.lower() not in (".png", ".jpg", ".jpeg"):
-            save_path = save_path.with_suffix(f".{fmt}")
+        # Force the extension to match the requested format, so a JPEG is
+        # never written into a ``.png`` (or vice versa).
+        save_path = save_path.with_suffix(f".{fmt}")
         save_path = confine_path(save_path, env_var=ENV_OUTPUT_ROOT)
 
         pid = config.get("pid")

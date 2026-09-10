@@ -239,8 +239,30 @@ class FileTool(AbstractTool):
                 param="pattern",
                 input_value=raw_pattern,
             )
+        _check_pattern(raw_pattern)
         entries: list[dict[str, Any]] = await run_blocking(_list_entries, path, raw_pattern)
         return {"path": str(path), "entries": entries, "count": len(entries)}
+
+
+def _check_pattern(pattern: str) -> None:
+    """Reject glob patterns that could escape the listing directory.
+
+    ``pathlib`` refuses absolute patterns but happily resolves ``..``
+    components, so ``../*.txt`` would list files outside the sandbox.
+    """
+    candidate = Path(pattern.replace("\\", "/"))
+    if candidate.is_absolute() or candidate.drive:
+        raise InvalidInput(
+            "Invalid 'pattern': must be relative to the listed directory",
+            param="pattern",
+            input_value=pattern,
+        )
+    if any(part == ".." for part in candidate.parts):
+        raise InvalidInput(
+            "Invalid 'pattern': '..' is not allowed",
+            param="pattern",
+            input_value=pattern,
+        )
 
 
 def _delete_path(path: Path) -> bool:
@@ -250,6 +272,13 @@ def _delete_path(path: Path) -> bool:
         return True
     except FileNotFoundError:
         return False
+    except IsADirectoryError as exc:
+        raise PlatformError(
+            f"Cannot delete {path}: it is a directory (delete files, not folders)",
+            source=exc,
+        ) from exc
+    except OSError as exc:
+        raise PlatformError(f"Cannot delete {path}: {exc}", source=exc) from exc
 
 
 def _list_entries(path: Path, pattern: str) -> list[dict[str, Any]]:
@@ -257,14 +286,22 @@ def _list_entries(path: Path, pattern: str) -> list[dict[str, Any]]:
     if not path.is_dir():
         raise PlatformError(f"Not a directory: {path}")
     entries: list[dict[str, Any]] = []
-    for item in sorted(path.glob(pattern)):
-        entries.append(
-            {
-                "name": item.name,
-                "type": "dir" if item.is_dir() else "file",
-                "size": item.stat().st_size if item.is_file() else None,
-            }
-        )
+    try:
+        items = sorted(path.glob(pattern))
+    except (ValueError, OSError) as exc:
+        raise PlatformError(f"Cannot list {path}: {exc}", source=exc) from exc
+    for item in items:
+        try:
+            is_file = item.is_file()
+            entries.append(
+                {
+                    "name": item.name,
+                    "type": "dir" if item.is_dir() else "file",
+                    "size": item.stat().st_size if is_file else None,
+                }
+            )
+        except OSError:
+            continue
     return entries
 
 
@@ -276,4 +313,12 @@ def _check_encoding(config: dict[str, Any]) -> str:
             param="encoding",
             input_value=encoding,
         )
+    try:
+        "".encode(encoding)
+    except LookupError as exc:
+        raise InvalidInput(
+            f"Unknown encoding: {encoding!r}",
+            param="encoding",
+            input_value=encoding,
+        ) from exc
     return encoding

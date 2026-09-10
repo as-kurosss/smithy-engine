@@ -41,8 +41,10 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from smithy.core.errors import BusinessError, InfrastructureError
 from smithy.core.selectors import SelectorStore
 from smithy.flow import FlowError, FlowRunner, jsonable, parse_typed_value, validate_document
+from smithy.pack import manifest_lists_file
 
 if TYPE_CHECKING:
     from smithy.core.registry import ToolRegistry
@@ -62,8 +64,11 @@ def _load_registry() -> ToolRegistry:
 
         for tool in windows_tools():
             registry.register(tool)
-    except ImportError:
-        pass
+    except ImportError as exc:
+        print(
+            f"warning: windows tools unavailable ({exc}); only custom tools are registered",
+            file=sys.stderr,
+        )
     return registry
 
 
@@ -72,7 +77,9 @@ def _print_log(level: str, msg: str) -> None:
 
 
 def _load_doc(path: str) -> dict[str, Any]:
-    document: dict[str, Any] = json.loads(Path(path).read_text(encoding="utf-8"))
+    document = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(document, dict):
+        raise ValueError(f"{path}: flow document must be a JSON object")
     return document
 
 
@@ -141,7 +148,10 @@ def _parse_sets(items: list[str], parser: argparse.ArgumentParser) -> dict[str, 
         name, sep, value = item.partition("=")
         if not sep:
             parser.error(f"--set expects NAME=VALUE, got {item!r}")
-        variables[name.strip()] = parse_typed_value(value, "auto")
+        name = name.strip()
+        if not name:
+            parser.error(f"--set expects a non-empty variable name, got {item!r}")
+        variables[name] = parse_typed_value(value, "auto")
     return variables
 
 
@@ -170,17 +180,32 @@ async def _run_transactional(
     doc: dict[str, Any],
     registry: ToolRegistry,
     args: argparse.Namespace,
+    *,
+    variables: dict[str, Any],
+    selector_store: SelectorStore | None,
+    dev_capture: bool,
 ) -> dict[str, Any]:
     """REFramework loop: each work item's payload drives one flow run."""
     from smithy.core.transactions import run_transactions_async
 
     queue = _build_queue(args)
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        with contextlib.suppress(NotImplementedError, RuntimeError, ValueError, OSError):
+            loop.add_signal_handler(sig, stop_event.set)
 
     async def process_fn(item: Any) -> dict[str, Any]:
-        variables: dict[str, Any] = dict(item.payload)
-        runner = FlowRunner(registry, variables=variables, log=_print_log)
+        item_variables: dict[str, Any] = {**variables, **dict(item.payload)}
+        runner = FlowRunner(
+            registry,
+            variables=item_variables,
+            log=_print_log,
+            dev_capture=dev_capture,
+            selector_store=selector_store,
+        )
         await runner.run(doc)
-        snapshot: dict[str, Any] = jsonable(variables)
+        snapshot: dict[str, Any] = jsonable(item_variables)
         return snapshot
 
     report = await run_transactions_async(
@@ -189,6 +214,7 @@ async def _run_transactional(
         queue_name=args.queue,
         run_id=args.run_id or f"flow-{uuid.uuid4().hex[:8]}",
         lease_seconds=args.lease_seconds,
+        stop_checker=stop_event.is_set,
     )
     _print_log(
         "info",
@@ -295,7 +321,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         doc = _load_doc(str(flow_path))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"cannot read flow file: {exc}", file=sys.stderr)
         return _EXIT_FAILED
 
@@ -307,7 +333,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         except SystemExit as exc:
             print(str(exc), file=sys.stderr)
             return _EXIT_FAILED
-    if pack_dir is not None and (pack_dir / "tools.py").is_file():
+    if (
+        pack_dir is not None
+        and (pack_dir / "tools.py").is_file()
+        and manifest_lists_file(manifest, "tools.py")
+    ):
         try:
             for tool_instance in _load_tools(str(pack_dir / "tools.py")):
                 registry.register(tool_instance)
@@ -315,11 +345,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(str(exc), file=sys.stderr)
             return _EXIT_FAILED
 
-    if args.validate:
-        import os
+    selector_store_path: SelectorStore | None = None
+    if pack_dir is not None and (pack_dir / "selectors.json").is_file():
+        selector_store_path = SelectorStore(pack_dir / "selectors.json")
 
-        store_path = os.environ.get("SMITHY_SELECTOR_STORE", "selectors.json")
-        store = SelectorStore(store_path) if Path(store_path).exists() else None
+    if args.validate:
+        store = selector_store_path
+        if store is None:
+            store_path = os.environ.get("SMITHY_SELECTOR_STORE", "selectors.json")
+            store = SelectorStore(store_path) if Path(store_path).exists() else None
         problems = validate_document(doc, registry=registry, selector_store=store)
         if problems:
             for problem in problems:
@@ -333,14 +367,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         if source is not None:
             try:
                 variables.update(_load_vars_file(source))
-            except (OSError, json.JSONDecodeError) as exc:
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
                 print(f"cannot read variables file: {exc}", file=sys.stderr)
                 return _EXIT_FAILED
     variables.update(_parse_sets(args.set, parser))
 
-    selector_store_path: SelectorStore | None = None
-    if pack_dir is not None and (pack_dir / "selectors.json").is_file():
-        selector_store_path = SelectorStore(pack_dir / "selectors.json")
     runner = FlowRunner(
         registry,
         variables=variables,
@@ -353,10 +384,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.transactional:
             if not args.queue:
                 parser.error("--transactional requires --queue NAME")
-            asyncio.run(_run_transactional(doc, registry, args))
+            asyncio.run(
+                _run_transactional(
+                    doc,
+                    registry,
+                    args,
+                    variables=variables,
+                    selector_store=selector_store_path,
+                    dev_capture=bool(args.capture),
+                )
+            )
         else:
             asyncio.run(_run_once(runner, doc))
-    except FlowError as exc:
+    except (FlowError, BusinessError, InfrastructureError) as exc:
         print(f"flow failed: {exc}", file=sys.stderr)
         return _EXIT_FAILED
     except (KeyboardInterrupt, asyncio.CancelledError):

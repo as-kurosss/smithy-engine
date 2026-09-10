@@ -25,6 +25,8 @@ from smithy.windows.tools.selector_capture.capture import (
     capture_at_point,
     path_to_dicts,
 )
+from smithy.windows.tools.selector_capture.flowgen import nodes_to_flow
+from smithy.windows.tools.selector_capture.record import record_series
 
 __all__ = [
     "BestSelector",
@@ -35,5 +37,7 @@ __all__ = [
     "capture_at_point",
     "capture_once",
     "capture_once_async",
+    "nodes_to_flow",
     "path_to_dicts",
+    "record_series",
 ]

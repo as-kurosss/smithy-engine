@@ -35,7 +35,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from smithy.core.errors import ElementNotFound
+from smithy.core.errors import BusinessError, Cancelled, ElementNotFound, InfrastructureError
 from smithy.core.redact import redact_text
 from smithy.core.selectors import SelectorStore
 
@@ -53,6 +53,21 @@ _REPR_LIMIT = 2000
 
 _ERROR_POLICIES = ("stop", "continue", "retry")
 _MAX_FLOW_DEPTH = 8
+
+#: Source handles each node kind may emit (validated by ``validate_document``).
+_ALLOWED_HANDLES: dict[str, frozenset[str]] = {
+    "start": frozenset({"out"}),
+    "tool": frozenset({"out", "error"}),
+    "flow": frozenset({"out", "error"}),
+    "set": frozenset({"out", "error"}),
+    "if": frozenset({"true", "false", "error"}),
+    "loop": frozenset({"body", "done", "error"}),
+}
+
+#: Hard cap on node executions per run. A cycle of synchronous nodes would
+#: otherwise spin forever (it never yields to the event loop, so even
+#: ``asyncio.wait_for`` cannot cancel it).
+_DEFAULT_MAX_STEPS = 100_000
 
 
 class FlowError(Exception):
@@ -189,6 +204,10 @@ def evaluate_condition(
 
 def parse_typed_value(value: Any, vtype: str) -> Any:
     """Interpret a ``set`` node value according to its declared type."""
+    if vtype in ("auto", "json") and not isinstance(value, str):
+        # Already a structured/typed value — keep it instead of
+        # stringifying a Python repr that is not valid JSON.
+        return value
     text = "" if value is None else str(value)
     if vtype == "string":
         return text
@@ -289,10 +308,13 @@ class FlowRunner:
         assets: AssetProvider | None = None,
         selector_store: SelectorStore | None = None,
         dev_capture: bool | None = None,
+        max_steps: int = _DEFAULT_MAX_STEPS,
     ) -> None:
         self._registry = registry
         self._variables: dict[str, Any] = variables if variables is not None else {}
-        self._edges: list[dict[str, Any]] = edges or []
+        self._edges: list[dict[str, Any]] = list(edges or [])
+        self._edges_default: list[dict[str, Any]] = list(edges or [])
+        self._max_steps = max_steps
         self._log = log or _noop_log
         self._logging = log is not None
         self._loops: dict[str, dict[str, Any]] = {}
@@ -403,7 +425,8 @@ class FlowRunner:
             result = await self._registry.execute(name, config)
         except Exception as exc:
             if self._logging:
-                self._log("error", f"✗ {name}: {type(exc).__name__}: {exc}")
+                message = redact_text(f"{type(exc).__name__}: {exc}", self._secrets)
+                self._log("error", f"✗ {name}: {message}")
             raise
         if self._logging:
             elapsed = (time.perf_counter() - start) * 1000
@@ -415,7 +438,15 @@ class FlowRunner:
             self._variables[str(save_as)] = result
 
     async def _run_subflow(self, node: dict[str, Any]) -> None:
-        config = self._interpolate(dict(node.get("config") or {}))
+        # Only ``path``/``inputs`` are interpolated: an inline ``doc`` is a
+        # nested flow document and must be evaluated in the child's scope,
+        # not rewritten with the parent's variables.
+        raw = dict(node.get("config") or {})
+        config = dict(raw)
+        if "path" in raw:
+            config["path"] = self._interpolate(raw["path"])
+        if "inputs" in raw:
+            config["inputs"] = self._interpolate(raw["inputs"])
         path = config.get("path")
         doc = config.get("doc")
         if (path is None) == (doc is None):
@@ -431,57 +462,157 @@ class FlowRunner:
             raise FlowError("flow node 'doc' must be a flow document object")
         if self._flow_depth >= _MAX_FLOW_DEPTH:
             raise FlowError(f"subflow nesting deeper than {_MAX_FLOW_DEPTH}")
+
+        scope = str(config.get("scope") or "shared")
+        if scope not in ("shared", "isolated"):
+            raise FlowError(f"flow node 'scope' must be 'shared' or 'isolated', got {scope!r}")
         inputs = config.get("inputs")
-        if inputs is not None:
-            if not isinstance(inputs, dict):
-                raise FlowError("flow node 'inputs' must be an object")
-            for var, value in inputs.items():
+        if inputs is not None and not isinstance(inputs, dict):
+            raise FlowError("flow node 'inputs' must be an object")
+
+        if scope == "isolated":
+            # Function semantics: the child sees only the declared inputs,
+            # and only declared outputs flow back to the parent.
+            child_variables: dict[str, Any] = {
+                str(var): value for var, value in (inputs or {}).items()
+            }
+        else:
+            child_variables = self._variables
+            for var, value in (inputs or {}).items():
                 self._variables[str(var)] = value
+
         child = FlowRunner(
             self._registry,
-            variables=self._variables,
+            variables=child_variables,
             log=self._log,
             assets=self._assets,
             selector_store=self._selector_store,
             dev_capture=self._dev_capture,
+            max_steps=self._max_steps,
         )
         child._flow_depth = self._flow_depth + 1
         await child.run(doc)
 
-    async def _run_with_on_error(self, node: dict[str, Any], step: Any) -> None:
-        """Run *step* honoring the node's ``on_error`` spec."""
+        outputs = config.get("outputs")
+        if outputs is not None:
+            if scope != "isolated":
+                raise FlowError("flow node 'outputs' requires 'scope': 'isolated'")
+            self._copy_outputs(outputs, child_variables)
+
+    def _copy_outputs(self, outputs: Any, child_variables: dict[str, Any]) -> None:
+        """Copy declared child variables into the parent scope."""
+        if isinstance(outputs, list):
+            for name in outputs:
+                if not isinstance(name, str) or not name:
+                    raise FlowError("flow node 'outputs' entries must be non-empty strings")
+                if name in child_variables:
+                    self._variables[name] = child_variables[name]
+            return
+        if isinstance(outputs, dict):
+            for parent_name, child_name in outputs.items():
+                if not isinstance(parent_name, str) or not isinstance(child_name, str):
+                    raise FlowError("flow node 'outputs' keys and values must be strings")
+                if child_name in child_variables:
+                    self._variables[parent_name] = child_variables[child_name]
+            return
+        raise FlowError("flow node 'outputs' must be a list or an object")
+
+    async def _run_guarded(
+        self, node: dict[str, Any], step: Any, *, continue_handle: str
+    ) -> str | None:
+        """Run *step* (which returns an output handle) honoring ``on_error``.
+
+        ``stop`` fails the run; ``retry`` retries then fails; ``continue``
+        saves the error and takes *continue_handle*. Returns the resolved
+        next node id (or ``None``).
+        """
         spec = _parse_on_error(node.get("on_error"))
         policy = spec["policy"]
-        if policy == "stop":
-            await step(node)
-            return
         node_id = str(node["id"])
-        attempts = spec.get("retries", 0) + 1
+        if policy == "stop":
+            handle = await step(node)
+            return self.next_by_handle(node_id, handle)
+        attempts = spec.get("retries", 0) + 1 if policy == "retry" else 1
         last: Exception | None = None
         for attempt in range(attempts):
             try:
-                await step(node)
-                return
+                handle = await step(node)
+                return self.next_by_handle(node_id, handle)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 last = exc
-                if attempt < attempts - 1:
+                if policy == "retry" and attempt < attempts - 1:
+                    detail = redact_text(f"{type(exc).__name__}: {exc}", self._secrets)
                     self._log(
                         "warning",
                         f"node {node_id}: attempt {attempt + 1}/{attempts} failed "
-                        f"({type(exc).__name__}: {exc}) — retrying",
+                        f"({detail}) — retrying",
                     )
                     await asyncio.sleep(spec.get("delay_ms", 500) / 1000)
-        if policy == "continue":
-            var = str(spec.get("save_error_as") or "_error")
-            self._variables[var] = f"{type(last).__name__}: {last}"
-            self._log(
-                "error",
-                f"✗ node {node_id} failed (policy=continue) → ${var} = {last}",
-            )
-            return
+                    continue
+                if policy == "continue":
+                    var = str(spec.get("save_error_as") or "_error")
+                    self._variables[var] = f"{type(exc).__name__}: {exc}"
+                    detail = redact_text(f"{type(exc).__name__}: {exc}", self._secrets)
+                    self._log(
+                        "error",
+                        f"✗ node {node_id} failed (policy=continue) → ${var} = {detail}",
+                    )
+                    return self.next_by_handle(node_id, continue_handle)
+                raise
         raise last  # type: ignore[misc]
+
+    async def _step_tool(self, node: dict[str, Any]) -> str:
+        await self._run_tool(node)
+        return "out"
+
+    async def _step_flow(self, node: dict[str, Any]) -> str:
+        await self._run_subflow(node)
+        return "out"
+
+    def _raise_fail(self, node: dict[str, Any]) -> None:
+        """End the run with a business or infrastructure failure.
+
+        ``BusinessError`` means bad data (terminal, no retry); the
+        transaction runner records ``business_failed``. ``InfrastructureError``
+        is a system failure (the item is retried within its budget).
+        """
+        config = dict(node.get("config") or {})
+        mode = str(config.get("mode") or "business")
+        message = self._interpolate(config.get("message"))
+        text = str(message).strip() if message is not None else ""
+        if not text:
+            text = f"flow stopped at node {node.get('id')!r}"
+        if mode == "business":
+            raise BusinessError(text)
+        if mode == "system":
+            raise InfrastructureError(text)
+        raise FlowError(f"fail node 'mode' must be 'business' or 'system', got {mode!r}")
+
+    async def _step_set(self, node: dict[str, Any]) -> str:
+        cfg = dict(node.get("config") or {})
+        var = str(cfg.get("var") or "")
+        if not var:
+            raise FlowError("set node needs a variable name")
+        vtype = str(cfg.get("type") or "auto")
+        value = parse_set_value(
+            cfg.get("value"), vtype, self._variables, resolve_asset=self._resolve_asset
+        )
+        self._variables[var] = value
+        if self._logging:
+            rendered = redact_text(repr(jsonable(value)), self._secrets)
+            self._log("debug", f"set ${var} = {short(rendered)}")
+        return "out"
+
+    async def _step_if(self, node: dict[str, Any]) -> str:
+        condition = dict(node.get("condition") or {})
+        branch = evaluate_condition(condition, self._variables, resolve_asset=self._resolve_asset)
+        self._log(
+            "debug",
+            f"if {condition.get('var')} {condition.get('op')} → {branch}",
+        )
+        return "true" if branch else "false"
 
     def _init_loop(self, spec: dict[str, Any]) -> dict[str, Any]:
         max_iter = int(spec.get("max_iterations") or 100)
@@ -496,7 +627,7 @@ class FlowRunner:
             items = [seq]
         return {"mode": "foreach", "items": items, "i": 0}
 
-    def _step_loop(self, node: dict[str, Any]) -> str | None:
+    def _step_loop(self, node: dict[str, Any]) -> str:
         node_id = str(node["id"])
         spec = dict(node.get("loop") or {})
         st = self._loops.get(node_id)
@@ -508,100 +639,143 @@ class FlowRunner:
             if st["i"] >= len(items):
                 del self._loops[node_id]
                 self._log("debug", "loop exhausted → done")
-                return self.next_by_handle(node_id, "done")
+                return "done"
             var_name = str(spec.get("as") or "item")
             self._variables[var_name] = items[st["i"]]
             self._log("debug", f"loop iteration {st['i'] + 1}/{len(items)} → {var_name}")
             st["i"] += 1
-            return self.next_by_handle(node_id, "body")
+            return "body"
         if st["i"] >= int(st["max"]):
             del self._loops[node_id]
             self._log("error", f"while-loop hit max_iterations={st['max']} → done")
-            return self.next_by_handle(node_id, "done")
+            return "done"
         condition = dict(spec.get("condition") or {})
         if not evaluate_condition(condition, self._variables, resolve_asset=self._resolve_asset):
             del self._loops[node_id]
             self._log("debug", "while condition is false → done")
-            return self.next_by_handle(node_id, "done")
+            return "done"
         st["i"] += 1
-        return self.next_by_handle(node_id, "body")
+        return "body"
 
     async def execute_node(self, node: dict[str, Any]) -> str | None:
         """Execute one node; return the next node id or ``None`` to finish."""
         kind = str(node.get("kind") or "")
         node_id = str(node["id"])
-        if node.get("on_error") is not None:
-            _parse_on_error(node.get("on_error"))
         if kind == "start":
             return self.next_by_handle(node_id, "out")
         if kind == "end":
             return None
+        if kind == "fail":
+            self._raise_fail(node)
+        if node.get("on_error") is not None:
+            _parse_on_error(node.get("on_error"))
         if kind == "tool":
-            await self._run_with_on_error(node, self._run_tool)
-            return self.next_by_handle(node_id, "out")
+            return await self._run_guarded(node, self._step_tool, continue_handle="out")
         if kind == "flow":
-            await self._run_with_on_error(node, self._run_subflow)
-            return self.next_by_handle(node_id, "out")
+            return await self._run_guarded(node, self._step_flow, continue_handle="out")
         if kind == "set":
-            cfg = dict(node.get("config") or {})
-            var = str(cfg.get("var") or "")
-            if not var:
-                raise FlowError("set node needs a variable name")
-            vtype = str(cfg.get("type") or "auto")
-            value = parse_set_value(
-                cfg.get("value"), vtype, self._variables, resolve_asset=self._resolve_asset
-            )
-            self._variables[var] = value
-            if self._logging:
-                rendered = redact_text(repr(jsonable(value)), self._secrets)
-                self._log("debug", f"set ${var} = {short(rendered)}")
-            return self.next_by_handle(node_id, "out")
+            return await self._run_guarded(node, self._step_set, continue_handle="out")
         if kind == "if":
-            condition = dict(node.get("condition") or {})
-            branch = evaluate_condition(
-                condition, self._variables, resolve_asset=self._resolve_asset
-            )
-            self._log(
-                "debug",
-                f"if {condition.get('var')} {condition.get('op')} → {branch}",
-            )
-            return self.next_by_handle(node_id, "true" if branch else "false")
+            return await self._run_guarded(node, self._step_if, continue_handle="false")
         if kind == "loop":
-            return self._step_loop(node)
+            return await self._run_guarded(
+                node, self._step_loop_sync_wrapper, continue_handle="done"
+            )
         raise FlowError(f"unknown node kind {kind!r}")
+
+    async def _step_loop_sync_wrapper(self, node: dict[str, Any]) -> str:
+        return self._step_loop(node)
 
     # ------------------------------------------------------------- full run
 
     def _start_node(self, doc: dict[str, Any]) -> dict[str, Any]:
         if doc.get("version") != FLOW_VERSION:
             raise FlowError(f"unsupported flow version {doc.get('version')!r}")
+        nodes = doc.get("nodes")
+        if not isinstance(nodes, list):
+            raise FlowError("flow 'nodes' must be an array")
         start_node: dict[str, Any] | None = next(
-            (n for n in doc.get("nodes") or [] if n.get("kind") == "start"), None
+            (n for n in nodes if isinstance(n, dict) and n.get("kind") == "start"), None
         )
         if start_node is None:
             raise FlowError("flow has no start node")
         return start_node
 
+    def _collect_nodes(self, doc: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        nodes: dict[str, dict[str, Any]] = {}
+        for raw in doc.get("nodes") or []:
+            if not isinstance(raw, dict) or not raw.get("id"):
+                raise FlowError("flow has a node without an id")
+            nodes[str(raw["id"])] = raw
+        return nodes
+
     async def run(self, doc: dict[str, Any]) -> str:
         """Execute the whole graph; returns ``"finished"`` on success.
 
         Raises:
-            FlowError: On validation problems or a failing node (the node
-                id is part of the message).
+            FlowError: On validation problems, a node without an id, a
+                dangling edge, a run that exceeds ``max_steps`` (a cycle),
+                or a failing node (the node id is part of the message).
         """
+        if not isinstance(doc, dict):
+            raise FlowError("flow document must be an object")
         start = self._start_node(doc)
-        nodes = {str(n["id"]): n for n in doc.get("nodes") or []}
-        self._edges = list(doc.get("edges") or self._edges)
+        nodes = self._collect_nodes(doc)
+        if "edges" in doc:
+            self._edges = list(doc.get("edges") or [])
+        else:
+            self._edges = list(self._edges_default)
+        self._loops = {}
+        steps = 0
         node: dict[str, Any] | None = start
         while node is not None:
+            node_id = str(node.get("id"))
+            steps += 1
+            if steps > self._max_steps:
+                raise FlowError(
+                    f"flow exceeded {self._max_steps} node executions "
+                    "(probable cycle) at node "
+                    f"{node_id!r}"
+                )
             try:
                 next_id: str | None = await self.execute_node(node)
-            except FlowError as exc:
-                raise FlowError(f"node {node['id']}: {exc}") from exc
+            except asyncio.CancelledError:
+                raise
+            except (BusinessError, InfrastructureError, Cancelled):
+                # Domain failures must reach the caller unchanged so the
+                # transaction runner can classify them (business/system/stop).
+                raise
             except Exception as exc:
-                raise FlowError(f"node {node['id']}: {type(exc).__name__}: {exc}") from exc
-            node = nodes.get(next_id) if next_id is not None else None
+                next_id = self._route_error_edge(node, exc)
+                if next_id is None:
+                    if isinstance(exc, FlowError):
+                        raise FlowError(f"node {node_id}: {exc}") from exc
+                    raise FlowError(f"node {node_id}: {type(exc).__name__}: {exc}") from exc
+            if next_id is None:
+                node = None
+                break
+            node = nodes.get(next_id)
+            if node is None:
+                raise FlowError(f"edge target {next_id!r} is not a node")
         return "finished"
+
+    def _route_error_edge(self, node: dict[str, Any], exc: Exception) -> str | None:
+        """Return the ``error`` edge target for *node*, or ``None``.
+
+        The error is saved into ``on_error.save_error_as`` (default
+        ``$_error``) so the recovery branch can inspect it.
+        """
+        node_id = str(node.get("id"))
+        target = self.next_by_handle(node_id, "error")
+        if target is None:
+            return None
+        spec = _parse_on_error(node.get("on_error")) if node.get("on_error") is not None else {}
+        var = str(spec.get("save_error_as") or "_error")
+        self._variables[var] = f"{type(exc).__name__}: {exc}"
+        if self._logging:
+            detail = redact_text(f"{type(exc).__name__}: {exc}", self._secrets)
+            self._log("error", f"✗ node {node_id} → error edge (${var} = {detail})")
+        return target
 
 
 # ------------------------------------------------------------------ validation
@@ -651,14 +825,50 @@ def validate_document(
 
     for node_id, node in nodes.items():
         kind = str(node.get("kind") or "")
-        if kind not in ("start", "end", "tool", "set", "if", "loop", "flow"):
+        if kind not in ("start", "end", "tool", "set", "if", "loop", "flow", "fail"):
             problems.append(f"node {node_id!r}: unknown kind {kind!r}")
         if kind == "tool" and not node.get("tool"):
             problems.append(f"node {node_id!r}: tool node without a tool name")
+        if kind == "fail":
+            config = node.get("config") or {}
+            if isinstance(config, dict):
+                mode = config.get("mode")
+                if mode is not None and mode not in ("business", "system"):
+                    problems.append(
+                        f"node {node_id!r}: fail mode must be business or system, got {mode!r}"
+                    )
         if kind == "flow":
             config = node.get("config") or {}
             if (config.get("path") is None) == (config.get("doc") is None):
                 problems.append(f"node {node_id!r}: flow node needs exactly one of 'path' or 'doc'")
+            if not isinstance(config, dict):
+                problems.append(f"node {node_id!r}: flow node 'config' must be an object")
+            else:
+                scope = config.get("scope")
+                if scope is not None and scope not in ("shared", "isolated"):
+                    problems.append(
+                        f"node {node_id!r}: flow scope must be shared or isolated, got {scope!r}"
+                    )
+                inputs = config.get("inputs")
+                if inputs is not None and not isinstance(inputs, dict):
+                    problems.append(f"node {node_id!r}: flow 'inputs' must be an object")
+                outputs = config.get("outputs")
+                if outputs is not None and not isinstance(outputs, (list, dict)):
+                    problems.append(f"node {node_id!r}: flow 'outputs' must be a list or object")
+                if outputs is not None and scope != "isolated":
+                    problems.append(f"node {node_id!r}: flow outputs requires scope=isolated")
+        if kind == "set":
+            config = node.get("config") or {}
+            if not isinstance(config, dict) or not str(config.get("var") or ""):
+                problems.append(f"node {node_id!r}: set node needs config.var")
+        if kind == "if":
+            condition = node.get("condition")
+            if not isinstance(condition, dict) or not condition.get("var"):
+                problems.append(f"node {node_id!r}: if node needs a condition with 'var'")
+        if kind == "loop":
+            loop = node.get("loop")
+            if not isinstance(loop, dict) or not loop.get("mode"):
+                problems.append(f"node {node_id!r}: loop node needs loop.mode")
         if node.get("on_error") is not None:
             try:
                 _parse_on_error(node.get("on_error"))
@@ -673,8 +883,9 @@ def validate_document(
                 from smithy.core.schema import validate_against_schema
 
                 config = node.get("config") or {}
-                for field_problem in validate_against_schema(tool_obj.schema(), config):
-                    problems.append(f"node {node_id!r}: {name}: {field_problem}")
+                if not _looks_interpolated(config):
+                    for field_problem in validate_against_schema(tool_obj.schema(), config):
+                        problems.append(f"node {node_id!r}: {name}: {field_problem}")
                 key = config.get("key") if isinstance(config, dict) else None
                 if isinstance(key, str) and key:
                     if selector_store is not None:
@@ -707,6 +918,30 @@ def validate_document(
             problems.append(f"edge source {source!r} is not a node")
         if target not in nodes:
             problems.append(f"edge target {target!r} is not a node")
-        if not edge.get("source_handle"):
+        handle = edge.get("source_handle")
+        if not handle:
             problems.append(f"edge {source!r}→{target!r} has no source_handle")
+        elif isinstance(source, str) and source in nodes:
+            allowed = _ALLOWED_HANDLES.get(str(nodes[source].get("kind") or ""))
+            if allowed is not None and handle not in allowed:
+                problems.append(
+                    f"edge {source!r}→{target!r}: handle {handle!r} is not valid for a "
+                    f"{nodes[source].get('kind')!r} node (allowed: {sorted(allowed)})"
+                )
     return problems
+
+
+def _looks_interpolated(config: Any) -> bool:
+    """True when *config* contains ``$var``/``${asset:...}`` references.
+
+    Interpolated values are only known at run time, so static schema
+    validation would produce false positives (e.g. ``"$delay"`` for an
+    integer field).
+    """
+    if isinstance(config, str):
+        return bool(_VAR_RE.search(config)) or "${asset:" in config
+    if isinstance(config, dict):
+        return any(_looks_interpolated(value) for value in config.values())
+    if isinstance(config, list):
+        return any(_looks_interpolated(value) for value in config)
+    return False

@@ -109,21 +109,48 @@ def _bounding_rect(element: Any) -> Any:
 
 
 def _flash_rect(left: int, top: int, right: int, bottom: int, color: int, duration_ms: int) -> None:
-    """Draw an outline rectangle on the screen DC, wait, then erase (runs in executor)."""
+    """Draw an outline, release the DC, wait, then repaint (runs in executor)."""
     import ctypes
 
     user32 = ctypes.windll.user32
     gdi32 = ctypes.windll.gdi32
+    user32.GetDC.argtypes = [ctypes.c_void_p]
+    user32.GetDC.restype = ctypes.c_void_p
+    user32.ReleaseDC.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    user32.ReleaseDC.restype = ctypes.c_int
+    gdi32.CreatePen.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_ulong]
+    gdi32.CreatePen.restype = ctypes.c_void_p
+    gdi32.SelectObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    gdi32.SelectObject.restype = ctypes.c_void_p
+    gdi32.DeleteObject.argtypes = [ctypes.c_void_p]
+    gdi32.DeleteObject.restype = ctypes.c_int
+    gdi32.Rectangle.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+    ]
+    gdi32.Rectangle.restype = ctypes.c_int
+    gdi32.GetStockObject.argtypes = [ctypes.c_int]
+    gdi32.GetStockObject.restype = ctypes.c_void_p
+
     hdc = user32.GetDC(None)
     try:
         pen = gdi32.CreatePen(0, 3, color)  # PS_SOLID, 3px
-        old_pen = gdi32.SelectObject(hdc, pen)
-        old_brush = gdi32.SelectObject(hdc, gdi32.GetStockObject(5))  # NULL_BRUSH
-        gdi32.Rectangle(hdc, left, top, right, bottom)
-        gdi32.SelectObject(hdc, old_pen)
-        gdi32.SelectObject(hdc, old_brush)
-        gdi32.DeleteObject(pen)
-        time.sleep(duration_ms / 1000)
+        if not pen:
+            return
+        try:
+            old_pen = gdi32.SelectObject(hdc, pen)
+            old_brush = gdi32.SelectObject(hdc, gdi32.GetStockObject(5))  # NULL_BRUSH
+            gdi32.Rectangle(hdc, left, top, right, bottom)
+            gdi32.SelectObject(hdc, old_pen)
+            gdi32.SelectObject(hdc, old_brush)
+        finally:
+            gdi32.DeleteObject(pen)
     finally:
+        # Release the screen DC before sleeping — never hold it for up to
+        # `duration_ms` on the single UIA thread.
         user32.ReleaseDC(None, hdc)
+    time.sleep(duration_ms / 1000)
     user32.RedrawWindow(None, None, None, _RDW_INVALIDATE | _RDW_ERASE | _RDW_ALLCHILDREN)

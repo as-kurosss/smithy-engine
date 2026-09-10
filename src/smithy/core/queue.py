@@ -13,6 +13,7 @@ the smithy-cloud contract exactly:
 
 from __future__ import annotations
 
+import copy
 import heapq
 import json
 import sqlite3
@@ -194,7 +195,7 @@ class InMemoryQueue:
             record = _Record(
                 id=uuid.uuid4().hex,
                 queue=queue,
-                payload=dict(payload),
+                payload=copy.deepcopy(payload),
                 seq=self._seq,
             )
             self._items[record.id] = record
@@ -230,7 +231,7 @@ class InMemoryQueue:
             return ClaimedItem(
                 id=record.id,
                 queue=queue,
-                payload=dict(record.payload),
+                payload=copy.deepcopy(record.payload),
                 attempts=record.attempts,
                 lease_expires_at=lease,
             )
@@ -257,7 +258,7 @@ class InMemoryQueue:
             else:
                 record.status = status
             record.error = error
-            record.result = None if result is None else dict(result)
+            record.result = None if result is None else copy.deepcopy(result)
             return self._view(record)
 
     def renew_lease(self, item_id: str, *, run_id: str, lease_seconds: int = 300) -> datetime:
@@ -314,10 +315,34 @@ class InMemoryQueue:
         return QueueItem(
             id=record.id,
             queue=record.queue,
-            payload=dict(record.payload),
+            payload=copy.deepcopy(record.payload),
             status=record.status,
             attempts=record.attempts,
         )
+
+    def purge_terminal(self) -> int:
+        """Delete terminal items and their idempotency keys.
+
+        The queue has no automatic retention, so a long-lived worker
+        would otherwise grow without bound. Returns the number removed.
+        """
+        with self._lock:
+            removed = [
+                item_id
+                for item_id, record in self._items.items()
+                if record.status in TERMINAL_STATUSES
+            ]
+            for item_id in removed:
+                self._items.pop(item_id)
+            self._keys = {key: value for key, value in self._keys.items() if value not in removed}
+            dead = set(removed)
+            for new_heap in self._new.values():
+                new_heap[:] = [entry for entry in new_heap if entry[1] not in dead]
+                heapq.heapify(new_heap)
+            for lease_heap in self._leases.values():
+                lease_heap[:] = [entry for entry in lease_heap if entry[1] not in dead]
+                heapq.heapify(lease_heap)
+            return len(removed)
 
 
 # ----------------------------------------------------------------------
@@ -374,11 +399,16 @@ class SqliteQueue:
                 "SELECT max_attempts FROM queues WHERE name = ?", (name,)
             ).fetchone()
             if row is None:
+                # OR IGNORE keeps a concurrent creator winning the race.
                 self._conn.execute(
-                    "INSERT INTO queues (name, max_attempts) VALUES (?, ?)",
+                    "INSERT OR IGNORE INTO queues (name, max_attempts) VALUES (?, ?)",
                     (name, max_attempts),
                 )
-                return QueueInfo(name=name, max_attempts=max_attempts)
+                row = self._conn.execute(
+                    "SELECT max_attempts FROM queues WHERE name = ?", (name,)
+                ).fetchone()
+            if row is None:
+                raise KeyError(f"Unknown queue: {name!r}")
             return QueueInfo(name=name, max_attempts=int(row["max_attempts"]))
 
     def add(
@@ -414,7 +444,8 @@ class SqliteQueue:
             self._conn.execute(
                 "UPDATE items SET status = 'new', run_id = NULL, lease_expires_at = NULL,"
                 " updated_at = ? WHERE queue = ? AND status = 'in_progress'"
-                " AND lease_expires_at IS NOT NULL AND lease_expires_at < ?",
+                " AND lease_expires_at IS NOT NULL"
+                " AND julianday(lease_expires_at) < julianday(?)",
                 (now.isoformat(), queue, now.isoformat()),
             )
             row = self._conn.execute(
@@ -490,6 +521,20 @@ class SqliteQueue:
                 (lease.isoformat(), now.isoformat(), item_id),
             )
             return lease
+
+    def purge_terminal(self) -> int:
+        """Delete terminal items; returns the number removed.
+
+        Call periodically (or after a batch) to bound database growth —
+        the queue has no automatic retention.
+        """
+        with self._lock, self._conn:
+            placeholders = ",".join("?" for _ in TERMINAL_STATUSES)
+            cursor = self._conn.execute(
+                f"DELETE FROM items WHERE status IN ({placeholders})",  # noqa: S608
+                tuple(TERMINAL_STATUSES),
+            )
+            return cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
 
     # -- internals -----------------------------------------------------
 

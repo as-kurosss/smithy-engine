@@ -65,7 +65,7 @@ class TestWaitTool:
         from smithy.windows.tools.wait import WaitTool
 
         with patch.object(ElementSelector, "find_from_desktop", return_value=MagicMock()):
-            assert await WaitTool().execute({"timeout_ms": 1000}) is True
+            assert await WaitTool().execute({"timeout_ms": 1000, "name": "x"}) is True
 
     @pytest.mark.asyncio
     async def test_returns_false_when_missing(self) -> None:
@@ -76,7 +76,7 @@ class TestWaitTool:
             "find_from_desktop",
             side_effect=ElementNotFound("nope"),
         ):
-            result = await WaitTool().execute({"timeout_ms": 60, "interval_ms": 50})
+            result = await WaitTool().execute({"timeout_ms": 60, "interval_ms": 50, "name": "x"})
             assert result is False
 
     @pytest.mark.asyncio

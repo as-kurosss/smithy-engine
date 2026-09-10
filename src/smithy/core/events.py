@@ -71,11 +71,15 @@ class EventBus:
         and skipped, so a broken middleware can never mask a tool result
         or error.
 
+        The pipeline is snapshotted before iteration, so a middleware may
+        safely add/remove middleware while running without corrupting the
+        current dispatch.
+
         Returns the final (possibly transformed) event, or ``None`` if
         a middleware stopped propagation.
         """
         current: ToolEvent | None = event
-        for mw in self._middlewares:
+        for mw in tuple(self._middlewares):
             if current is None:
                 return None
             try:

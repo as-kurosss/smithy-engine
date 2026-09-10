@@ -15,9 +15,9 @@ from typing import Any
 from smithy.flow import FLOW_VERSION
 from smithy.windows.tools.selector_capture.generate import FlowNode
 
-_LANE_Y = 140
-_X0 = 80
-_STEP_DX = 240
+_LANE_X = 80
+_Y0 = 80
+_STEP_DY = 130
 _LABEL_LIMIT = 60
 
 
@@ -37,7 +37,7 @@ def nodes_to_flow(nodes: Sequence[FlowNode], *, name: str | None = None) -> dict
         ValueError: If any recorded node carries no tool name.
     """
     doc_nodes: list[dict[str, Any]] = [
-        {"id": "start", "kind": "start", "config": {}, "position": [_X0, _LANE_Y]}
+        {"id": "start", "kind": "start", "config": {}, "position": [_LANE_X, _Y0]}
     ]
     edges: list[dict[str, Any]] = []
 
@@ -51,7 +51,7 @@ def nodes_to_flow(nodes: Sequence[FlowNode], *, name: str | None = None) -> dict
             "kind": "tool",
             "tool": node.tool,
             "config": dict(node.args),
-            "position": [_X0 + (index + 1) * _STEP_DX, _LANE_Y],
+            "position": [_LANE_X, _Y0 + (index + 1) * _STEP_DY],
         }
         label = _label_for(node)
         if label:
@@ -62,8 +62,8 @@ def nodes_to_flow(nodes: Sequence[FlowNode], *, name: str | None = None) -> dict
         )
         previous = node_id
 
-    end_x = _X0 + (len(nodes) + 1) * _STEP_DX
-    doc_nodes.append({"id": "end", "kind": "end", "config": {}, "position": [end_x, _LANE_Y]})
+    end_y = _Y0 + (len(nodes) + 1) * _STEP_DY
+    doc_nodes.append({"id": "end", "kind": "end", "config": {}, "position": [_LANE_X, end_y]})
     edges.append(
         {
             "id": f"e{len(nodes) + 1}",

@@ -25,6 +25,10 @@ from smithy.core.tool import AbstractTool
 
 # WinRT interop in Windows PowerShell 5.1: activate the required WinRT
 # types, bridge IAsyncOperation with AsTask, then OCR the image file.
+#
+# The image path and language are passed through the environment
+# (SMITHY_OCR_PATH / SMITHY_OCR_LANG) — never interpolated into the
+# script text — so user-controlled values cannot inject PowerShell.
 _OCR_SCRIPT = r"""
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
@@ -45,15 +49,15 @@ function Await($WinRtTask, $ResultType) {
     $netTask.Result
 }
 
-if ('__LANG__' -ne '') {
+if ($env:SMITHY_OCR_LANG -ne '') {
     $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage(
-        [Windows.Globalization.Language]::new('__LANG__'))
+        [Windows.Globalization.Language]::new($env:SMITHY_OCR_LANG))
 } else {
     $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
 }
 if ($null -eq $engine) { throw 'OCR engine unavailable for the requested language' }
 
-$file = Await ([Windows.Storage.StorageFile]::GetFileFromPathAsync('__PATH__')) `
+$file = Await ([Windows.Storage.StorageFile]::GetFileFromPathAsync($env:SMITHY_OCR_PATH)) `
     ([Windows.Storage.StorageFile])
 $stream = Await ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) `
     ([Windows.Storage.Streams.IRandomAccessStream])
@@ -187,8 +191,9 @@ def _capture_region(region: tuple[int, int, int, int]) -> Path:
 
 def _recognize(image_path: Path, language: str) -> str:
     """Run the PowerShell OCR script (runs in an executor)."""
-    script = _OCR_SCRIPT.replace("__PATH__", str(image_path).replace("'", "''"))
-    script = script.replace("__LANG__", language.replace("'", "''"))
+    env = dict(os.environ)
+    env["SMITHY_OCR_PATH"] = str(image_path)
+    env["SMITHY_OCR_LANG"] = language
     completed = subprocess.run(
         [
             "powershell.exe",
@@ -197,13 +202,14 @@ def _recognize(image_path: Path, language: str) -> str:
             "-ExecutionPolicy",
             "Bypass",
             "-Command",
-            script,
+            _OCR_SCRIPT,
         ],
         capture_output=True,
         text=True,
         timeout=60,
         encoding="utf-8",
         errors="replace",
+        env=env,
     )
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout).strip()

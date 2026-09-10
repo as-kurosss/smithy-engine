@@ -107,3 +107,48 @@ class TestProcessWait:
             await ProcessTool().execute({"action": "wait", "pid": 1, "timeout_ms": 0})
         with pytest.raises(InvalidInput, match="pid"):
             await ProcessTool().execute({"action": "status"})
+
+
+class TestProcessStopDecoding:
+    """taskkill output is OEM-coded; decoding must never be strict.
+
+    The agent runs deployed processes with PYTHONUTF8=1, which made
+    ``subprocess.run(..., text=True)`` decode taskkill's cp866/cp1251 output
+    as UTF-8 and raise in the reader thread.
+    """
+
+    @pytest.mark.asyncio
+    async def test_stop_by_pid_uses_replace(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[dict[str, Any]] = []
+
+        def fake_run(args: list[str], **kwargs: Any) -> Any:
+            calls.append(kwargs)
+
+            class _Done:
+                returncode = 0
+                stderr = ""
+
+            return _Done()
+
+        monkeypatch.setattr("smithy.windows.tools.process.subprocess.run", fake_run)
+        await ProcessTool().execute({"action": "stop", "pid": 4242})
+        assert calls[0].get("errors") == "replace"
+        assert calls[0].get("encoding") == "utf-8"
+
+    @pytest.mark.asyncio
+    async def test_stop_by_name_uses_replace(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[dict[str, Any]] = []
+
+        def fake_run(args: list[str], **kwargs: Any) -> Any:
+            calls.append(kwargs)
+
+            class _Done:
+                returncode = 0
+                stderr = ""
+
+            return _Done()
+
+        monkeypatch.setattr("smithy.windows.tools.process.subprocess.run", fake_run)
+        await ProcessTool().execute({"action": "stop", "name": "notepad.exe"})
+        assert calls[0].get("errors") == "replace"
+        assert calls[0].get("encoding") == "utf-8"

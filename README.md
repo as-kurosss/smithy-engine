@@ -101,6 +101,11 @@ await bot.click(key="login.submit")   # first run: capture; then: silent
 await bot.input_text(key="login.password", text=bot.asset("login.password"))
 ```
 
+Every value returned by `bot.asset(...)` is remembered and scrubbed from
+the tool events the bot emits, so it cannot leak into the JSONL audit log
+or a trace. (Pass secrets through an asset reference — a literal string
+that was never fetched via an asset cannot be auto-redacted.)
+
 Enable dev mode with `dev_capture=True`, the `SMITHY_DEV_CAPTURE=1` env,
 or `run_flow --capture` for flows (`key` fields in tool configs work the
 same way). Keys never appear in the audit log as resolved fields — the

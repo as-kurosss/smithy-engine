@@ -58,3 +58,9 @@ class TestProcessAllowlist:
         monkeypatch.setenv("SMITHY_ALLOWED_COMMANDS", "env-app.exe")
         tool = ProcessTool(allowed_commands=["ctor-app.exe"])
         assert tool.allowed_commands == {"ctor-app.exe"}
+
+    @pytest.mark.asyncio
+    async def test_stop_by_name_obeys_allowlist(self) -> None:
+        tool = ProcessTool()
+        with pytest.raises(InvalidInput, match="not in the allowed list"):
+            await tool.execute({"action": "stop", "name": "cmd.exe"})

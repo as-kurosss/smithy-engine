@@ -88,6 +88,15 @@ class TestBuildVerify:
         assert "robot.toml" not in listed
         assert "queue.db" not in listed
 
+    def test_main_py_not_listed(self, tmp_path: Path) -> None:
+        """Packs are flow-only: the legacy runner shim is never shipped."""
+        root = _make_pack(tmp_path)
+        (root / "main.py").write_text("print('shim')", encoding="utf-8")
+        build_pack(root, name="p", version="1")
+        manifest = load_manifest(root)
+        listed = {item["path"] for item in manifest["files"]}
+        assert "main.py" not in listed
+
     def test_venv_and_caches_not_listed(self, tmp_path: Path) -> None:
         root = _make_pack(tmp_path)
         venv = root / ".venv" / "Lib" / "site-packages" / "pkg"
@@ -180,6 +189,37 @@ class TestDelivery:
     def test_fetch_missing_source(self, tmp_path: Path) -> None:
         with pytest.raises(InvalidInput, match="not found"):
             fetch_pack(str(tmp_path / "nope.zip"), tmp_path / "out")
+
+    def test_fetch_rejects_insecure_remote(self, tmp_path: Path) -> None:
+        with pytest.raises(InvalidInput, match="https"):
+            fetch_pack("http://example.com/p.zip", tmp_path / "out")
+
+    def test_fetch_rejects_alternate_data_stream(self, tmp_path: Path) -> None:
+        import zipfile
+
+        evil = tmp_path / "ads.zip"
+        with zipfile.ZipFile(evil, "w") as zf:
+            zf.writestr("payload.txt:evil", "x")
+        with pytest.raises(InvalidInput, match="unsafe path"):
+            fetch_pack(str(evil), tmp_path / "out")
+
+    def test_fetch_rejects_reserved_device_name(self, tmp_path: Path) -> None:
+        import zipfile
+
+        evil = tmp_path / "reserved.zip"
+        with zipfile.ZipFile(evil, "w") as zf:
+            zf.writestr("CON.txt", "x")
+        with pytest.raises(InvalidInput, match="unsafe path"):
+            fetch_pack(str(evil), tmp_path / "out")
+
+    def test_fetch_rejects_oversized_expansion(self, tmp_path: Path) -> None:
+        import zipfile
+
+        bomb = tmp_path / "bomb.zip"
+        with zipfile.ZipFile(bomb, "w") as zf:
+            zf.writestr("data.bin", b"x" * 4096)
+        with pytest.raises(InvalidInput, match="expands beyond"):
+            fetch_pack(str(bomb), tmp_path / "out", max_bytes=16)
 
     def test_zip_refuses_unverified_pack(self, tmp_path: Path) -> None:
         root = _make_pack(tmp_path)

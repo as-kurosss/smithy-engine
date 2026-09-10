@@ -45,10 +45,28 @@ PACK_SCHEMA = "smithy-pack-v1"
 _RETRYABLE_STATUS: frozenset[int] = frozenset({502, 503, 504})
 _RETRY_BASE_SECONDS = 0.5
 
+#: Hard cap for a downloaded/uploaded pack and for its uncompressed size
+#: on disk — a bound against memory exhaustion and zip bombs.
+DEFAULT_MAX_PACK_BYTES = 200 * 1024 * 1024
+
+_WINDOWS_RESERVED_NAMES: frozenset[str] = frozenset(
+    {
+        "con",
+        "prn",
+        "aux",
+        "nul",
+        *(f"com{i}" for i in range(1, 10)),
+        *(f"lpt{i}" for i in range(1, 10)),
+    }
+)
+
 #: Machine-local/runtime files — never checksummed.
 _IGNORED_PATTERNS: tuple[str, ...] = (
     PACK_MANIFEST,
     "robot.toml",
+    # ``main.py`` is the old bundle's runner shim; packs are flow-only and
+    # the agent runs the flow itself, so it never ships.
+    "main.py",
     "__pycache__",
     # environments, VCS and tool caches — machine-local, never shipped
     ".venv",
@@ -264,6 +282,7 @@ def _upload_pack(
     token: str,
     timeout: float = 60.0,
     max_retries: int = 3,
+    max_bytes: int = DEFAULT_MAX_PACK_BYTES,
 ) -> None:
     """Multipart-POST *archive* to the orchestrator (stdlib urllib only).
 
@@ -271,6 +290,13 @@ def _upload_pack(
     meaningful answers (400/401/409/413/422) surface immediately with the
     server's detail message.
     """
+    size = archive.stat().st_size
+    if size > max_bytes:
+        raise InvalidInput(
+            f"pack archive is {size} bytes, over the {max_bytes}-byte upload cap",
+            param="directory",
+            input_value=str(archive),
+        )
     boundary = uuid.uuid4().hex
     data = archive.read_bytes()
     body = (
@@ -320,18 +346,18 @@ def _upload_pack(
             ) from exc
 
 
-def _check_api_url(base_url: str, *, allow_insecure: bool) -> None:
+def _check_api_url(base_url: str, *, allow_insecure: bool, label: str = "api_url") -> None:
     """Same transport policy as HttpQueue: https always; loopback http free,
     any other plain http only with *allow_insecure* (token in cleartext)."""
     parsed = urllib.parse.urlparse(base_url)
     if parsed.scheme not in ("http", "https"):
-        raise InvalidInput("api_url must be an http(s) URL", param="api_url", input_value=base_url)
+        raise InvalidInput(f"{label} must be an http(s) URL", param=label, input_value=base_url)
     if parsed.scheme != "https" and not allow_insecure:
         host = (parsed.hostname or "").lower()
         if host not in ("localhost", "127.0.0.1", "::1"):
             raise InvalidInput(
-                "api_url must use https:// (pass --insecure to override)",
-                param="api_url",
+                f"{label} must use https:// (pass allow_insecure/--insecure to override)",
+                param=label,
                 input_value=base_url,
             )
 
@@ -347,6 +373,7 @@ def publish_pack(
     entry: dict[str, str] | None = None,
     allow_insecure: bool = False,
     timeout: float = 60.0,
+    max_bytes: int = DEFAULT_MAX_PACK_BYTES,
 ) -> Path:
     """Build, verify, zip and upload a pack — the whole release in one call.
 
@@ -360,6 +387,7 @@ def publish_pack(
         entry: Optional stage → flow file overrides.
         allow_insecure: Allow plain http to non-loopback hosts.
         timeout: Upload timeout in seconds.
+        max_bytes: Reject archives larger than this (memory bound).
 
     Returns:
         The zip path that was uploaded.
@@ -375,32 +403,106 @@ def publish_pack(
     quoted_name = urllib.parse.quote(name, safe="")
     quoted_version = urllib.parse.quote(version, safe="")
     url = f"{api_url.rstrip('/')}/packs/{quoted_name}/versions/{quoted_version}"
-    _upload_pack(url, archive, token=token, timeout=timeout)
+    _upload_pack(url, archive, token=token, timeout=timeout, max_bytes=max_bytes)
     return archive
 
 
-def _safe_extract(archive: zipfile.ZipFile, dest: Path) -> None:
-    """Extract *archive* into *dest*, rejecting unsafe member paths (zip-slip)."""
+def _member_parts(name: str) -> list[str]:
+    """Validate one archive member name; return its normalized path parts.
+
+    Rejects absolute paths, ``..`` traversal, NTFS alternate data streams
+    (``name:stream``) and Windows reserved device names. Raises
+    :class:`InvalidInput` on any unsafe member.
+    """
+    if not name or name.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", name):
+        raise InvalidInput(f"unsafe path in archive: {name!r}")
+    parts = [part for part in name.replace("\\", "/").split("/") if part not in ("", ".")]
+    if any(part == ".." for part in parts):
+        raise InvalidInput(f"unsafe path in archive: {name!r}")
+    for part in parts:
+        if ":" in part:
+            raise InvalidInput(f"unsafe path in archive: {name!r} (alternate data stream)")
+        if part != part.rstrip(" ."):
+            raise InvalidInput(f"unsafe path in archive: {name!r} (trailing dot/space)")
+        if part.split(".", 1)[0].lower() in _WINDOWS_RESERVED_NAMES:
+            raise InvalidInput(f"unsafe path in archive: {name!r} (reserved Windows name)")
+    return parts
+
+
+def _safe_extract(
+    archive: zipfile.ZipFile,
+    dest: Path,
+    *,
+    max_uncompressed: int = DEFAULT_MAX_PACK_BYTES,
+) -> None:
+    """Extract *archive* into *dest*, rejecting unsafe members (zip-slip).
+
+    Files are streamed one at a time with a running byte cap, so a zip
+    bomb cannot exhaust memory or disk. Unsafe member names (absolute,
+    traversal, ADS, reserved devices) abort extraction immediately.
+    """
     root = dest.resolve()
+    written = 0
     for member in archive.infolist():
-        name = member.filename
-        if not name or name.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", name):
-            raise InvalidInput(f"unsafe path in archive: {name!r}")
-        parts = [part for part in name.replace("\\", "/").split("/") if part not in ("", ".")]
-        if any(part == ".." for part in parts):
-            raise InvalidInput(f"unsafe path in archive: {name!r}")
-        target = (root / Path(*parts)).resolve()
+        parts = _member_parts(member.filename)
+        if not parts:
+            continue
+        target = (root.joinpath(*parts)).resolve()
         if not target.is_relative_to(root):
-            raise InvalidInput(f"unsafe path in archive: {name!r}")
-    archive.extractall(dest)
+            raise InvalidInput(f"unsafe path in archive: {member.filename!r}")
+        if member.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with archive.open(member) as source, target.open("wb") as sink:
+            while True:
+                chunk = source.read(65536)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > max_uncompressed:
+                    raise InvalidInput(
+                        f"pack archive expands beyond the allowed size ({max_uncompressed} bytes)"
+                    )
+                sink.write(chunk)
 
 
-def fetch_pack(source: str, dest: str | Path) -> Path:
+def _read_capped(response: Any, limit: int) -> bytes:
+    """Read an HTTP response body, aborting past *limit* bytes."""
+    length = response.headers.get("Content-Length")
+    if length is not None and length.isdigit() and int(length) > limit:
+        raise InvalidInput(
+            f"pack download is {length} bytes, over the {limit}-byte cap",
+            param="source",
+        )
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = response.read(65536)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > limit:
+            raise InvalidInput(f"pack download exceeds the {limit}-byte cap", param="source")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def fetch_pack(
+    source: str,
+    dest: str | Path,
+    *,
+    allow_insecure: bool = False,
+    max_bytes: int = DEFAULT_MAX_PACK_BYTES,
+) -> Path:
     """Download/locate a pack zip, extract and verify it into *dest*.
 
     *source* is an ``http(s)://`` URL (e.g. served by smithy-cloud) or a
-    local path to a zip. After extraction the manifest is verified; a
-    tampered archive raises before anything runs.
+    local path to a zip. Plain http to a non-loopback host is rejected
+    (the manifest inside the archive cannot protect against a MITM who
+    controls both files), unless *allow_insecure* is set. Downloads and
+    uncompressed output are capped at *max_bytes*. After extraction the
+    manifest is verified; a tampered archive raises before anything runs.
 
     Returns:
         The extracted pack directory (*dest*).
@@ -415,8 +517,9 @@ def fetch_pack(source: str, dest: str | Path) -> Path:
     tmp_zip: Path | None = None
     try:
         if re.match(r"^https?://", source):
-            with urllib.request.urlopen(source, timeout=60) as response:  # noqa: S310 — https enforced by https-only policy, loopback http allowed
-                data = response.read()
+            _check_api_url(source, allow_insecure=allow_insecure, label="source")
+            with urllib.request.urlopen(source, timeout=60) as response:  # noqa: S310 — scheme policy enforced above
+                data = _read_capped(response, max_bytes)
             tmp_zip = dest_dir / ".pack-download.tmp"
             tmp_zip.write_bytes(data)
             archive_path: Path = tmp_zip
@@ -427,7 +530,7 @@ def fetch_pack(source: str, dest: str | Path) -> Path:
                     f"pack archive not found: {source}", param="source", input_value=source
                 )
         with zipfile.ZipFile(archive_path) as archive:
-            _safe_extract(archive, dest_dir)
+            _safe_extract(archive, dest_dir, max_uncompressed=max_bytes)
     except zipfile.BadZipFile as exc:
         raise InvalidInput(
             f"pack archive is not a valid zip: {source}", param="source", input_value=source
@@ -519,6 +622,11 @@ def _main(argv: list[str] | None = None) -> int:
     p_fetch = sub.add_parser("fetch", help="download/locate a pack zip, extract and verify it")
     p_fetch.add_argument("source", help="http(s):// URL or local zip path")
     p_fetch.add_argument("--dest", required=True, help="directory to extract into")
+    p_fetch.add_argument(
+        "--insecure",
+        action="store_true",
+        help="allow plain http to non-loopback hosts (manifest verification cannot stop a MITM)",
+    )
 
     args = parser.parse_args(argv)
 
@@ -576,7 +684,7 @@ def _main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        fetch_pack(args.source, args.dest)
+        fetch_pack(args.source, args.dest, allow_insecure=args.insecure)
     except InvalidInput as exc:
         print(str(exc), file=sys.stderr)
         return 1

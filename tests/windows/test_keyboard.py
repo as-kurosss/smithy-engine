@@ -1,5 +1,8 @@
 """Tests for smithy.windows.tools.keyboard — normalize_keys."""
 
+import pytest
+
+from smithy.windows.tools import keyboard
 from smithy.windows.tools.keyboard import normalize_keys
 
 
@@ -50,3 +53,16 @@ class TestNormalizeKeys:
 
     def test_tap_and_hold_mixed(self) -> None:
         assert normalize_keys("[CTRL!]Hello[SHIFT]A") == "<tap:CTRL>Hello{SHIFT}A"
+
+
+class TestSendLiteralText:
+    def test_literal_chars_bypass_sendkeys_syntax(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        chars: list[str] = []
+        taps: list[str] = []
+        monkeypatch.setattr(keyboard, "_send_unicode", chars.append)
+        monkeypatch.setattr(keyboard, "_tap_key", taps.append)
+
+        keyboard.send_literal_text("a{+^%}\n\t\U0001f600")
+
+        assert chars == ["a", "{", "+", "^", "%", "}", "\U0001f600"]
+        assert taps == ["ENTER", "TAB"]

@@ -8,13 +8,12 @@ from smithy.core.blocking import run_blocking
 from smithy.core.errors import InvalidInput, PlatformError
 from smithy.core.tool import AbstractTool
 from smithy.windows.tools._resolve import resolve_element
+from smithy.windows.tools.keyboard import send_literal_text
 
 
 def _send(text: str) -> None:
-    """Send text via uiautomation.SendKeys."""
-    import uiautomation as auto
-
-    auto.SendKeys(text)
+    """Type *text* literally (SendInput Unicode, no SendKeys syntax)."""
+    send_literal_text(text)
 
 
 class InputTextTool(AbstractTool):

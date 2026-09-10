@@ -11,6 +11,7 @@ from typing import Any
 
 from smithy.core.blocking import run_blocking
 from smithy.core.errors import InvalidInput, PlatformError
+from smithy.core.files import confine_path
 from smithy.core.tool import AbstractTool
 
 # https://learn.microsoft.com/en-us/windows/win32/dwm/window-attributes
@@ -37,28 +38,6 @@ def _ensure_dpi_aware() -> None:
     except Exception:
         with contextlib.suppress(Exception):
             ctypes.windll.user32.SetProcessDPIAware()
-
-
-def _confine_path(save_path: Path) -> Path:
-    """Resolve *save_path* against ``SMITHY_OUTPUT_ROOT`` when set.
-
-    Absolute paths outside the sandbox and relative escapes (``..``) are
-    rejected. Without the env var the path is used as-is.
-    """
-    root_raw = os.environ.get(ENV_OUTPUT_ROOT)
-    if not root_raw:
-        return save_path
-    root = Path(root_raw).resolve()
-    candidate = save_path if save_path.is_absolute() else root / save_path
-    resolved = candidate.resolve()
-    if not resolved.is_relative_to(root):
-        raise InvalidInput(
-            f"Screenshot path {str(save_path)!r} escapes the output root "
-            f"{str(root)!r} (set via {ENV_OUTPUT_ROOT})",
-            param="path",
-            input_value=str(save_path),
-        )
-    return resolved
 
 
 class ScreenshotTool(AbstractTool):
@@ -128,7 +107,7 @@ class ScreenshotTool(AbstractTool):
         # Ensure the file extension matches the requested format
         if save_path.suffix.lower() not in (".png", ".jpg", ".jpeg"):
             save_path = save_path.with_suffix(f".{fmt}")
-        save_path = _confine_path(save_path)
+        save_path = confine_path(save_path, env_var=ENV_OUTPUT_ROOT)
 
         pid = config.get("pid")
         if pid is not None and (isinstance(pid, bool) or not isinstance(pid, int)):

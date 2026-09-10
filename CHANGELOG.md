@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.8.5 - 2026-09-10
+
+### Security
+
+- **Asset values are redacted from logs and traces.** Values returned by
+  `bot.asset(...)` are now remembered and scrubbed from tool events, so
+  the documented `text=bot.asset("login.password")` pattern no longer
+  writes the secret into `runs.jsonl` or a traced `flow.json`. The flow
+  runner also redacts tool results (not just the config) and set-node
+  values before logging.
+- **`pack fetch` enforces transport and size limits.** Plain http to a
+  non-loopback host is rejected (the in-archive manifest cannot stop a
+  MITM who controls both files). Downloads and uncompressed output are
+  capped at 200 MiB, defeating zip bombs; archive members with NTFS
+  alternate data streams, reserved device names or trailing dots/spaces
+  are rejected. `pack push` refuses oversized archives.
+- **`windows.process` stop-by-name obeys the allowlist** — a flow can no
+  longer terminate arbitrary processes by image name.
+- **OCR no longer interpolates the image path/language into the
+  PowerShell script**; they are passed via environment variables.
+
+### Changed
+
+- `input_text` types literal text through `SendInput` (Unicode), so
+  characters like `{`, `+`, `^`, `%` are no longer interpreted as
+  SendKeys control syntax. Astral characters (emoji) are sent as UTF-16
+  surrogate pairs.
+- `JsonlEventLogger` has a bounded write queue (records are dropped and
+  counted under backpressure instead of growing memory) and accepts a
+  `redact=` list.
+- `FlowRunner` skips config/result JSON serialization when no log sink is
+  attached.
+- `InMemoryQueue` resets expired leases via a lease heap instead of an
+  O(n) scan per claim.
+- `screenshot` reuses `core.files.confine_path` instead of duplicating it.
+- `smithy.__version__` is read from package metadata, so it can no longer
+  drift from `pyproject.toml`.
+- CI: added a coverage gate (>= 70%) and an advisory `pip-audit` job.
+
+### Fixed
+
+- **Packs are flow-only: `smithy.pack build` never ships `main.py`.** The
+  agent runs the flow itself (`smithy.run_flow`), so the legacy runner
+  shim no longer lands in the archive or the orchestrator.
+- **`windows.process` stop no longer crashes on localized `taskkill`
+  output.** Deployed processes run with `PYTHONUTF8=1`, so strict UTF-8
+  decoding of taskkill's OEM-codepage output raised `UnicodeDecodeError`
+  in the reader thread; captured output now decodes with
+  `errors="replace"`.
+
 ## 0.8.4 — 2026-09-10
 
 ### Added

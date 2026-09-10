@@ -167,6 +167,11 @@ class InMemoryQueue:
         # instead of a full scan. Entries for items that are no longer
         # "new" are skipped lazily on pop.
         self._new: dict[str, list[tuple[int, str]]] = {}
+        # Min-heap of (lease_expires_at, item_id) per queue — resetting
+        # expired leases is O(k log n) for k expired items instead of an
+        # O(n) scan of every record on every claim. Stale entries (a lease
+        # that was renewed or ended) are skipped lazily.
+        self._leases: dict[str, list[tuple[datetime, str]]] = {}
 
     def get_or_create_queue(self, name: str, *, max_attempts: int = 3) -> QueueInfo:
         _check_max_attempts(max_attempts)
@@ -220,6 +225,7 @@ class InMemoryQueue:
             record.lease_expires_at = now + timedelta(seconds=lease_seconds)
             record.error = None
             record.result = None
+            heapq.heappush(self._leases.setdefault(queue, []), (record.lease_expires_at, record.id))
             lease = record.lease_expires_at
             return ClaimedItem(
                 id=record.id,
@@ -263,6 +269,9 @@ class InMemoryQueue:
                 raise KeyError(f"Unknown queue item: {item_id!r}")
             self._check_owner(record, run_id)
             record.lease_expires_at = now + timedelta(seconds=lease_seconds)
+            heapq.heappush(
+                self._leases.setdefault(record.queue, []), (record.lease_expires_at, record.id)
+            )
             return record.lease_expires_at
 
     # -- internals -----------------------------------------------------
@@ -282,17 +291,23 @@ class InMemoryQueue:
 
     def _reset_expired_locked(self, queue: str, now: datetime) -> None:
         heap = self._new.setdefault(queue, [])
-        for record in self._items.values():
+        leases = self._leases.setdefault(queue, [])
+        while leases and leases[0][0] < now:
+            deadline, item_id = heapq.heappop(leases)
+            record = self._items.get(item_id)
+            # Skip stale entries: the record was renewed, finished or
+            # requeued since this lease entry was pushed.
             if (
-                record.queue == queue
-                and record.status == "in_progress"
-                and record.lease_expires_at is not None
-                and record.lease_expires_at < now
+                record is None
+                or record.queue != queue
+                or record.status != "in_progress"
+                or record.lease_expires_at != deadline
             ):
-                record.status = "new"
-                record.run_id = None
-                record.lease_expires_at = None
-                heapq.heappush(heap, (record.seq, record.id))
+                continue
+            record.status = "new"
+            record.run_id = None
+            record.lease_expires_at = None
+            heapq.heappush(heap, (record.seq, record.id))
 
     @staticmethod
     def _view(record: _Record) -> QueueItem:

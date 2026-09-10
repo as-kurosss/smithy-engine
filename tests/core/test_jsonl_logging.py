@@ -97,3 +97,23 @@ class TestJsonlEventLogger:
             logger.close()
         records = _read_lines(path)
         assert [record["tool"] for record in records] == ["a", "b"]
+
+    @pytest.mark.asyncio
+    async def test_redact_scrubs_config_result_and_error(self, tmp_path: Path) -> None:
+        path = tmp_path / "runs.jsonl"
+        logger = JsonlEventLogger(path, redact=["s3cret"])
+        try:
+            await logger(
+                ToolEvent(
+                    tool_name="t",
+                    config={"password": "s3cret"},
+                    result="s3cret",
+                    error=ElementNotFound("bad s3cret"),
+                )
+            )
+        finally:
+            logger.close()
+        (record,) = _read_lines(path)
+        assert record["config"] == {"password": "***"}
+        assert record["result"] == "***"
+        assert record["error"]["message"] == "bad ***"

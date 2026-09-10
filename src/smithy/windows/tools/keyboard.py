@@ -153,18 +153,42 @@ def _send_keybd(vk: int, scan: int, flags: int) -> None:
 
 
 def _send_unicode(char: str) -> None:
-    """Send a single Unicode character via SendInput KEYEVENTF_UNICODE."""
-    scan = ord(char)
-    down = _INPUT(
-        _INPUT_KEYBOARD,
-        _InputUnion(ki=_KEYBDINPUT(0, scan, _KEYEVENTF_UNICODE, 0, None)),
-    )
-    up = _INPUT(
-        _INPUT_KEYBOARD,
-        _InputUnion(ki=_KEYBDINPUT(0, scan, _KEYEVENTF_UNICODE | _KEYEVENTF_KEYUP, 0, None)),
-    )
-    ctypes.windll.user32.SendInput(1, ctypes.byref(down), ctypes.sizeof(down))
-    ctypes.windll.user32.SendInput(1, ctypes.byref(up), ctypes.sizeof(up))
+    """Send a single Unicode character via SendInput KEYEVENTF_UNICODE.
+
+    Characters outside the BMP are encoded as a UTF-16 surrogate pair and
+    sent as two events, so emoji/astral text survives.
+    """
+    encoded = char.encode("utf-16-le")
+    for offset in range(0, len(encoded), 2):
+        scan = encoded[offset] | (encoded[offset + 1] << 8)
+        down = _INPUT(
+            _INPUT_KEYBOARD,
+            _InputUnion(ki=_KEYBDINPUT(0, scan, _KEYEVENTF_UNICODE, 0, None)),
+        )
+        up = _INPUT(
+            _INPUT_KEYBOARD,
+            _InputUnion(ki=_KEYBDINPUT(0, scan, _KEYEVENTF_UNICODE | _KEYEVENTF_KEYUP, 0, None)),
+        )
+        ctypes.windll.user32.SendInput(1, ctypes.byref(down), ctypes.sizeof(down))
+        ctypes.windll.user32.SendInput(1, ctypes.byref(up), ctypes.sizeof(up))
+
+
+def send_literal_text(text: str) -> None:
+    """Type *text* literally via SendInput, bypassing SendKeys syntax.
+
+    Unlike :meth:`KeyboardTool` (which uses ``{...}`` tokens for named
+    keys), this treats every character as data: ``{``, ``+``, ``^``,
+    ``%``, ``~`` are typed as-is. Newlines become ENTER, tabs become TAB.
+    """
+    for char in text:
+        if char == "\n":
+            _tap_key("ENTER")
+        elif char == "\t":
+            _tap_key("TAB")
+        elif char == "\r":
+            continue
+        else:
+            _send_unicode(char)
 
 
 def _send(text: str) -> None:

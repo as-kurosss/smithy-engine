@@ -45,6 +45,7 @@ class TestOcrExecution:
 
         def fake_run(args: Any, **kwargs: Any) -> MagicMock:
             captured["script"] = args[-1]
+            captured["env"] = kwargs.get("env", {})
             done = MagicMock()
             done.returncode = 0
             done.stdout = "ИНН 7701234567\nИтого: 1500\n"
@@ -56,7 +57,8 @@ class TestOcrExecution:
         assert result["text"] == "ИНН 7701234567\nИтого: 1500"
         assert result["chars"] == len(result["text"])
         assert "__PATH__" not in captured["script"]
-        assert str(image).replace("'", "''") in captured["script"]
+        assert captured["env"]["SMITHY_OCR_PATH"] == str(image)
+        assert captured["env"]["SMITHY_OCR_LANG"] == ""
 
     @pytest.mark.asyncio
     async def test_language_forwarded(
@@ -69,6 +71,7 @@ class TestOcrExecution:
 
         def fake_run(args: Any, **kwargs: Any) -> MagicMock:
             captured["script"] = args[-1]
+            captured["env"] = kwargs.get("env", {})
             done = MagicMock()
             done.returncode = 0
             done.stdout = "ok"
@@ -77,7 +80,8 @@ class TestOcrExecution:
 
         monkeypatch.setattr(subprocess, "run", fake_run)
         await OcrTool().execute({"path": str(image), "language": "ru-RU"})
-        assert "'ru-RU'" in captured["script"]
+        assert captured["env"]["SMITHY_OCR_LANG"] == "ru-RU"
+        assert "__LANG__" not in captured["script"]
 
     @pytest.mark.asyncio
     async def test_failure_wrapped(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

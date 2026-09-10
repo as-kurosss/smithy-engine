@@ -28,13 +28,15 @@ ENV_FILE_ROOT = "SMITHY_FILE_ROOT"
 _ACTIONS = ("read", "write", "append", "copy", "move", "delete", "exists", "wait_for", "list")
 
 
-def confine_path(path: Path) -> Path:
-    """Resolve *path* against ``SMITHY_FILE_ROOT`` when set.
+def confine_path(path: Path, *, env_var: str = ENV_FILE_ROOT) -> Path:
+    """Resolve *path* against the sandbox root named by *env_var* when set.
 
     Absolute paths outside the sandbox and relative escapes (``..``)
-    are rejected. Without the env var the path is used as-is.
+    are rejected. Without the env var the path is used as-is. The
+    default sandbox is ``SMITHY_FILE_ROOT``; screenshot output reuses
+    this helper with ``SMITHY_OUTPUT_ROOT``.
     """
-    root_raw = os.environ.get(ENV_FILE_ROOT)
+    root_raw = os.environ.get(env_var)
     if not root_raw:
         return path
     root = Path(root_raw).resolve()
@@ -42,7 +44,7 @@ def confine_path(path: Path) -> Path:
     resolved = candidate.resolve()
     if not resolved.is_relative_to(root):
         raise InvalidInput(
-            f"Path {str(path)!r} escapes the file root {str(root)!r} (set via {ENV_FILE_ROOT})",
+            f"Path {str(path)!r} escapes the file root {str(root)!r} (set via {env_var})",
             param="path",
             input_value=str(path),
         )

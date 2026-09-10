@@ -158,7 +158,7 @@ class ProcessTool(AbstractTool):
             if action == "start":
                 return await _action_start(config, self._allowed)
             if action == "stop":
-                return await _action_stop(config)
+                return await _action_stop(config, self._allowed)
             if action == "wait":
                 return await _action_wait(config)
             if action == "status":
@@ -226,8 +226,14 @@ async def _action_start(
     return {"status": "started", "pid": pid}
 
 
-async def _action_stop(config: dict[str, Any]) -> dict[str, Any]:
-    """Stop a process by PID or name."""
+async def _action_stop(config: dict[str, Any], allowed: frozenset[str]) -> dict[str, Any]:
+    """Stop a process by PID or name.
+
+    Stopping by image *name* is restricted to the configured allowlist —
+    otherwise any flow could terminate arbitrary processes (e.g. system
+    services). Stop by PID is not name-restricted (the caller already has
+    a handle/pid it obtained itself).
+    """
     pid = config.get("pid")
     name = config.get("name")
 
@@ -248,6 +254,12 @@ async def _action_stop(config: dict[str, Any]) -> dict[str, Any]:
             param="name",
             input_value=name,
         )
+    if name is not None and not _is_command_allowed(name, allowed):
+        raise InvalidInput(
+            f"Command '{name}' is not in the allowed list",
+            param="name",
+            input_value=name,
+        )
 
     if pid is not None:
 
@@ -256,6 +268,12 @@ async def _action_stop(config: dict[str, Any]) -> dict[str, Any]:
                 ["taskkill", "/F", "/PID", str(pid)],
                 capture_output=True,
                 text=True,
+                # The agent forces PYTHONUTF8=1, but taskkill writes the
+                # console OEM codepage; strict UTF-8 decoding would raise in
+                # the reader thread. Replace is enough — the text is only
+                # surfaced in the error message.
+                encoding="utf-8",
+                errors="replace",
             )
             if result.returncode != 0:
                 raise PlatformError(
@@ -276,6 +294,9 @@ async def _action_stop(config: dict[str, Any]) -> dict[str, Any]:
             ["taskkill", "/F", "/IM", name],
             capture_output=True,
             text=True,
+            # Same OEM-codepage caveat as _stop_by_pid above.
+            encoding="utf-8",
+            errors="replace",
         )
         if result.returncode != 0:
             raise PlatformError(

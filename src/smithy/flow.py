@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from smithy.core.errors import ElementNotFound
+from smithy.core.redact import redact_text
 from smithy.core.selectors import SelectorStore
 
 if TYPE_CHECKING:
@@ -293,6 +294,7 @@ class FlowRunner:
         self._variables: dict[str, Any] = variables if variables is not None else {}
         self._edges: list[dict[str, Any]] = edges or []
         self._log = log or _noop_log
+        self._logging = log is not None
         self._loops: dict[str, dict[str, Any]] = {}
         self._assets = assets
         self._selector_store = selector_store
@@ -321,10 +323,7 @@ class FlowRunner:
 
     def _render_config(self, config: dict[str, Any]) -> str:
         rendered = json.dumps(config, ensure_ascii=False, default=str)
-        for secret in self._secrets:
-            if secret:
-                rendered = rendered.replace(secret, "***")
-        return short(rendered)
+        return short(redact_text(rendered, self._secrets))
 
     def _interpolate(self, value: Any) -> Any:
         return interpolate(value, self._variables, resolve_asset=self._resolve_asset)
@@ -384,7 +383,8 @@ class FlowRunner:
             raise FlowError("tool node has no tool name")
         config = self._interpolate(dict(node.get("config") or {}))
         key = await self._apply_selector_key(config)
-        self._log("info", f"▶ {name} {self._render_config(config)}")
+        if self._logging:
+            self._log("info", f"▶ {name} {self._render_config(config)}")
         start = time.perf_counter()
         try:
             result = await self._registry.execute(name, config)
@@ -402,11 +402,14 @@ class FlowRunner:
             config.update(captured.selector)
             result = await self._registry.execute(name, config)
         except Exception as exc:
-            self._log("error", f"✗ {name}: {type(exc).__name__}: {exc}")
+            if self._logging:
+                self._log("error", f"✗ {name}: {type(exc).__name__}: {exc}")
             raise
-        elapsed = (time.perf_counter() - start) * 1000
-        rendered = json.dumps(jsonable(result), ensure_ascii=False, default=str)
-        self._log("info", f"✓ {name} ({elapsed:.0f} ms) → {short(rendered)}")
+        if self._logging:
+            elapsed = (time.perf_counter() - start) * 1000
+            rendered = json.dumps(jsonable(result), ensure_ascii=False, default=str)
+            rendered = redact_text(rendered, self._secrets)
+            self._log("info", f"✓ {name} ({elapsed:.0f} ms) → {short(rendered)}")
         save_as = node.get("save_as")
         if save_as:
             self._variables[str(save_as)] = result
@@ -549,7 +552,9 @@ class FlowRunner:
                 cfg.get("value"), vtype, self._variables, resolve_asset=self._resolve_asset
             )
             self._variables[var] = value
-            self._log("debug", f"set ${var} = {short(repr(jsonable(value)))}")
+            if self._logging:
+                rendered = redact_text(repr(jsonable(value)), self._secrets)
+                self._log("debug", f"set ${var} = {short(rendered)}")
             return self.next_by_handle(node_id, "out")
         if kind == "if":
             condition = dict(node.get("condition") or {})

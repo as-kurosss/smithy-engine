@@ -11,6 +11,7 @@ from typing import Any, Protocol
 from smithy.core.assets import AssetProvider, EnvAssetProvider
 from smithy.core.errors import ElementNotFound, InvalidInput
 from smithy.core.events import EventBus, Middleware, ToolEvent
+from smithy.core.redact import redact_value
 from smithy.core.registry import ToolRegistry
 from smithy.core.selectors import SelectorStore
 from smithy.core.tool import Tool
@@ -75,6 +76,7 @@ class Smithy:
         self._selector_store_path = selector_store
         self._selector_store: SelectorStore | None = None
         self._active_key: str | None = None
+        self._secrets: list[str] = []
         if dev_capture is None:
             dev_capture = os.environ.get("SMITHY_DEV_CAPTURE", "").strip().lower() in (
                 "1",
@@ -94,9 +96,11 @@ class Smithy:
         """Fetch a runtime secret by reference name.
 
         Values come from the configured :class:`AssetProvider` (by
-        default ``SMITHY_ASSET_*`` environment variables) and are
-        returned to bot code only — they never pass through tool
-        configs or results, so they cannot leak into the audit log.
+        default ``SMITHY_ASSET_*`` environment variables). Every value
+        returned here is remembered and scrubbed from the tool events
+        this bot emits, so it cannot leak into the JSONL audit log, a
+        trace, or any other middleware. Use ``bot.asset("name")`` in
+        bot code instead of inlining literal secrets.
 
         Args:
             name: Asset reference (e.g. ``"db.password"``).
@@ -104,7 +108,10 @@ class Smithy:
         Returns:
             The secret value.
         """
-        return self._assets.get(name)
+        value = self._assets.get(name)
+        if value:
+            self._secrets.append(str(value))
+        return value
 
     def register(self, tool: Tool) -> None:
         """Register a tool for use by this bot."""
@@ -137,8 +144,8 @@ class Smithy:
                 self._active_key = None
             event = ToolEvent(
                 tool_name=tool_name,
-                config=config,
-                result=result,
+                config=redact_value(config, self._secrets),
+                result=redact_value(result, self._secrets),
                 error=error,
                 duration_ms=elapsed_ms,
                 metadata=metadata,

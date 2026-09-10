@@ -35,7 +35,13 @@ from smithy.core.transactions import (
 )
 from smithy.facade import ClickResult, ProcessHandle, Smithy
 
-__version__ = "0.8.3"
+try:
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as _pkg_version
+
+    __version__ = _pkg_version("smithy-engine")
+except PackageNotFoundError:  # pragma: no cover — running from an uninstalled tree
+    __version__ = "0.8.5"
 
 __all__ = [
     "AbstractTool",

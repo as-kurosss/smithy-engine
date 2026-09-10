@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from smithy.core.assets import DEFAULT_ASSET_PREFIX, EnvAssetProvider
 from smithy.core.errors import InvalidInput
+from smithy.core.events import ToolEvent
+from smithy.core.tool import tool
 from smithy.facade import Smithy
 
 
@@ -52,3 +56,32 @@ class TestFacadeAsset:
                 return f"value:{name}"
 
         assert Smithy(assets=StaticProvider()).asset("x") == "value:x"
+
+
+class TestFacadeSecretRedaction:
+    @pytest.mark.asyncio
+    async def test_asset_value_redacted_from_tool_events(self) -> None:
+        @tool("echo")
+        async def echo(config: dict) -> dict:
+            return {"echo": config.get("text")}
+
+        events: list[ToolEvent] = []
+
+        async def capture(event: ToolEvent) -> ToolEvent:
+            events.append(event)
+            return event
+
+        class StaticProvider:
+            def get(self, name: str) -> str:
+                return "s3cret-token"
+
+        bot = Smithy(tools=[echo], assets=StaticProvider())
+        bot.add_middleware(capture)
+        secret = bot.asset("token")
+        await bot.call("echo", text=secret)
+
+        (event,) = events
+        assert "s3cret-token" not in json.dumps(event.config)
+        assert "s3cret-token" not in json.dumps(event.result)
+        assert event.config["text"] == "***"
+        assert event.result["echo"] == "***"

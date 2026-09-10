@@ -51,7 +51,7 @@ asyncio.run(main())
 - **GetTableTool** (`windows.get_table`) — extract DataGrid/ListView/TreeView rows as JSON
 - **ControlActionTool** (`windows.control_action`) — native UIA pattern actions (`invoke`, `toggle`, `expand`, `collapse`, `select`, `focus`) that keep working when a window is covered or unfocused
 - **FileTool** (`file`) — `read`/`write`/`append`/`copy`/`move`/`delete`/`exists`/`wait_for`/`list`; optional `SMITHY_FILE_ROOT` sandbox confines every path
-- **ExcelTool** (`excel`, extra `[excel]`) — `read`/`write`/`append` for xlsx via openpyxl, honors the same file sandbox
+- **ExcelRead/Write/AppendTool** (`excel.read` / `excel.write` / `excel.append`, extra `[excel]`) — xlsx via openpyxl, honors the same file sandbox
 - **FindImageTool / ClickImageTool** (`windows.find_image`, `windows.click_image`, extra `[image]`) — OpenCV template matching for UIA-invisible UIs (Citrix/RDP/Java/canvas)
 - **OcrTool** (`windows.ocr`) — text from an image file or screen region via the built-in Windows OCR engine, zero extra dependencies
 
@@ -454,7 +454,7 @@ src/smithy/
 │   ├── files.py         — FileTool (SMITHY_FILE_ROOT sandbox)
 │   ├── blocking.py      — run_blocking: COM apartment worker + timeout
 │   ├── redact.py        — secret redaction helpers
-│   ├── excel.py         — ExcelTool (openpyxl)
+│   ├── excel.py         — excel.read / excel.write / excel.append (openpyxl)
 │   ├── queue.py         — Queue protocol, InMemoryQueue, SqliteQueue
 │   ├── http_queue.py    — HttpQueue client for the orchestrator
 │   ├── transactions.py  — REFramework-style runner + heartbeat

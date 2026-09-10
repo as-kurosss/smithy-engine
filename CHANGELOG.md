@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.8.11 - 2026-09-10
+
+### Changed
+
+- **Excel split into three tools** — `excel.read`, `excel.write`,
+  `excel.append` (was one `excel` tool with an `action` field), so a flow
+  node says exactly what it does. `windows_tools()` now returns 30 tools.
+- **Variable names are plain identifiers.** `set.var`, `save_as`,
+  `loop.var`/`loop.as`, `variables` names and `flow` `inputs`/`outputs`
+  names must match `[A-Za-z_]\w*` — a leading `$` is only the reference
+  syntax, never part of a name.
+
+### Added
+
+- **Asset tools** `asset.get` (a text asset) and `asset.credential` (a
+  credential's fields). They read the injected `SMITHY_ASSET_*` env at run
+  time; their values are registered as secrets, so the runner redacts them
+  from logs/errors and excludes the variables they land in from the
+  run-result snapshot sent back to the orchestrator.
+- **On-demand asset resolution by id/GUID or name.** When the agent sets
+  `SMITHY_ORCHESTRATOR_URL` + `SMITHY_AGENT_ID` + a token, the engine uses
+  `HttpAssetProvider` and fetches a single asset (`name`, `name.field` or a
+  GUID) from `GET /api/agents/{id}/assets/{ref}` instead of the whole vault
+  being injected into the environment; otherwise `EnvAssetProvider` is used.
+- **Asset fetches are process-scoped.** When `SMITHY_PROCESS_ID` is set (the
+  agent does it for each run), `HttpAssetProvider` passes it along and the
+  orchestrator returns only the assets that process is allowed to read.
+- **Typed flow variables** — a flow document's `variables` may be a list of
+  `{name, type, value}` (`auto|string|number|bool|json`) as well as the
+  plain-object form; `run_flow` seeds defaults with `parse_typed_value`
+  before payload / `--set` overrides.
+
 ## 0.8.10 - 2026-09-10
 
 Fail node: business vs system failure from a flow.

@@ -61,7 +61,7 @@ try:
 
     __version__ = _pkg_version("smithy-engine")
 except PackageNotFoundError:  # pragma: no cover — running from an uninstalled tree
-    __version__ = "0.8.10"
+    __version__ = "0.8.11"
 
 __all__ = [
     "AbstractTool",

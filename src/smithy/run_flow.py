@@ -155,6 +155,29 @@ def _parse_sets(items: list[str], parser: argparse.ArgumentParser) -> dict[str, 
     return variables
 
 
+def _seed_variables(doc: dict[str, Any]) -> dict[str, Any]:
+    """Defaults declared on the flow document.
+
+    Accepts a plain object (``{"name": value}``) or a typed list
+    (``[{"name", "type", "value"}]``); the list is coerced with
+    :func:`smithy.flow.parse_typed_value` so ``3`` can stay a number and
+    ``"3"`` a string.
+    """
+    raw = doc.get("variables")
+    if isinstance(raw, dict):
+        return dict(raw)
+    if not isinstance(raw, list):
+        return {}
+    seeded: dict[str, Any] = {}
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name")
+        if isinstance(name, str) and name:
+            seeded[name] = parse_typed_value(item.get("value"), str(item.get("type") or "auto"))
+    return seeded
+
+
 def _install_stop_handler(task: asyncio.Task[Any]) -> None:
     def _request_stop() -> None:
         task.cancel()
@@ -205,7 +228,7 @@ async def _run_transactional(
             selector_store=selector_store,
         )
         await runner.run(doc)
-        snapshot: dict[str, Any] = jsonable(item_variables)
+        snapshot: dict[str, Any] = jsonable(runner.public_variables())
         return snapshot
 
     report = await run_transactions_async(
@@ -362,7 +385,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("validation passed: document is runnable")
         return _EXIT_FINISHED
 
-    variables: dict[str, Any] = {}
+    variables: dict[str, Any] = _seed_variables(doc)
     for source in (args.payload, args.vars):
         if source is not None:
             try:

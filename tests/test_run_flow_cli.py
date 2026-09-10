@@ -58,6 +58,53 @@ class TestValidateMode:
         assert run_flow.main([str(tmp_path / "nope.json"), "--validate"]) == 1
 
 
+class TestDocumentVariables:
+    def test_variables_seed_flow_defaults(self, tmp_path: Path, capsys: Any) -> None:
+        doc = {
+            "version": 2,
+            "variables": {"who": "world"},
+            "nodes": [
+                {"id": "s", "kind": "start", "config": {}},
+                {
+                    "id": "bad",
+                    "kind": "fail",
+                    "config": {"mode": "business", "message": "hi $who"},
+                },
+            ],
+            "edges": _chain("s", "bad"),
+        }
+        path = _write(tmp_path, doc)
+        assert run_flow.main([str(path)]) == 1
+        assert "hi world" in capsys.readouterr().err
+
+    def test_variables_must_be_an_object(self, tmp_path: Path) -> None:
+        doc = _doc([{"id": "s", "kind": "start", "config": {}}], [])
+        doc["variables"] = "nope"
+        path = _write(tmp_path, doc)
+        assert run_flow.main([str(path), "--validate"]) == 1
+
+    def test_variables_list_seeds_typed_defaults(self, tmp_path: Path, capsys: Any) -> None:
+        doc = {
+            "version": 2,
+            "variables": [
+                {"name": "who", "type": "string", "value": "world"},
+                {"name": "n", "type": "number", "value": "3"},
+            ],
+            "nodes": [
+                {"id": "s", "kind": "start", "config": {}},
+                {
+                    "id": "bad",
+                    "kind": "fail",
+                    "config": {"mode": "business", "message": "$who $n"},
+                },
+            ],
+            "edges": _chain("s", "bad"),
+        }
+        path = _write(tmp_path, doc)
+        assert run_flow.main([str(path)]) == 1
+        assert "world 3" in capsys.readouterr().err
+
+
 class TestExitCodes:
     def test_finished_returns_zero(self, tmp_path: Path, monkeypatch: Any) -> None:
         path = _write(tmp_path, _clean_doc())

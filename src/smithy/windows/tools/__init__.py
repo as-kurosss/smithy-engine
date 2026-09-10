@@ -29,7 +29,8 @@ def windows_tools(
             the bot may start. ``None`` means the built-in demo list (or
             the ``SMITHY_ALLOWED_COMMANDS`` env override when set).
     """
-    from smithy.core.excel import ExcelTool
+    from smithy.core.asset_tools import AssetCredentialTool, AssetGetTool
+    from smithy.core.excel import ExcelAppendTool, ExcelReadTool, ExcelWriteTool
     from smithy.core.files import FileTool
     from smithy.windows.tools.click import ClickTool
     from smithy.windows.tools.clipboard import ClipboardTool
@@ -81,5 +82,9 @@ def windows_tools(
         ClickImageTool(),
         OcrTool(),
         FileTool(),
-        ExcelTool(),
+        ExcelReadTool(),
+        ExcelWriteTool(),
+        ExcelAppendTool(),
+        AssetGetTool(),
+        AssetCredentialTool(),
     ]

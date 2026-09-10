@@ -44,6 +44,11 @@ class Tool(Protocol):
 class AbstractTool(ABC):
     """Base class for tool implementations."""
 
+    #: True when ``execute()`` returns secret values (assets/credentials):
+    #: the flow runner redacts them from logs/errors and keeps them out of
+    #: the run result snapshot sent back to the orchestrator.
+    produces_secrets: bool = False
+
     @property
     @abstractmethod
     def name(self) -> str: ...

@@ -48,6 +48,25 @@ FLOW_VERSION = 2
 _VAR_RE = re.compile(r"\$(\w+)((?:\.\w+|\[[^\[\]]+\])*)")
 _REF_PART_RE = re.compile(r"\.(\w+)|\[([^\[\]]+)\]")
 _ASSET_RE = re.compile(r"\$\{asset:([^}]+)\}")
+#: Variable names are plain Python identifiers — a leading ``$`` is only
+#: ever the *reference* syntax, never part of a name.
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_]\w*$")
+
+
+def _identifier_ok(name: Any) -> bool:
+    return isinstance(name, str) and bool(_IDENTIFIER_RE.match(name))
+
+
+def _collect_strings(value: Any) -> list[str]:
+    """Every non-empty string leaf in *value* (used to register secrets)."""
+    if isinstance(value, str):
+        return [value] if value else []
+    if isinstance(value, dict):
+        return [item for child in value.values() for item in _collect_strings(child)]
+    if isinstance(value, (list, tuple)):
+        return [item for child in value for item in _collect_strings(child)]
+    return []
+
 
 _REPR_LIMIT = 2000
 
@@ -322,6 +341,7 @@ class FlowRunner:
         self._selector_store = selector_store
         self._dev_capture = dev_capture
         self._secrets: list[str] = []
+        self._secret_names: set[str] = set()
         self._flow_depth = 0
 
     # ------------------------------------------------------------ navigation
@@ -335,9 +355,9 @@ class FlowRunner:
     # ------------------------------------------------------------ interpolation
 
     def _resolve_asset(self, name: str) -> str:
-        from smithy.core.assets import EnvAssetProvider
+        from smithy.core.assets import asset_provider_from_env
 
-        assets = self._assets if self._assets is not None else EnvAssetProvider()
+        assets = self._assets if self._assets is not None else asset_provider_from_env()
         value = str(assets.get(name))
         if value:
             self._secrets.append(value)
@@ -346,6 +366,18 @@ class FlowRunner:
     def _render_config(self, config: dict[str, Any]) -> str:
         rendered = json.dumps(config, ensure_ascii=False, default=str)
         return short(redact_text(rendered, self._secrets))
+
+    def _remember_secrets(self, value: Any) -> None:
+        """Register secret string leaves so they are redacted everywhere."""
+        for secret in _collect_strings(value):
+            if secret not in self._secrets:
+                self._secrets.append(secret)
+
+    def public_variables(self) -> dict[str, Any]:
+        """Variables safe to report back: secret-assigned names are removed."""
+        return {
+            key: value for key, value in self._variables.items() if key not in self._secret_names
+        }
 
     def _interpolate(self, value: Any) -> Any:
         return interpolate(value, self._variables, resolve_asset=self._resolve_asset)
@@ -405,6 +437,7 @@ class FlowRunner:
             raise FlowError("tool node has no tool name")
         config = self._interpolate(dict(node.get("config") or {}))
         key = await self._apply_selector_key(config)
+        tool_obj = self._registry.get(name)
         if self._logging:
             self._log("info", f"▶ {name} {self._render_config(config)}")
         start = time.perf_counter()
@@ -428,6 +461,9 @@ class FlowRunner:
                 message = redact_text(f"{type(exc).__name__}: {exc}", self._secrets)
                 self._log("error", f"✗ {name}: {message}")
             raise
+        secret_result = getattr(tool_obj, "produces_secrets", False)
+        if secret_result:
+            self._remember_secrets(result)
         if self._logging:
             elapsed = (time.perf_counter() - start) * 1000
             rendered = json.dumps(jsonable(result), ensure_ascii=False, default=str)
@@ -436,6 +472,8 @@ class FlowRunner:
         save_as = node.get("save_as")
         if save_as:
             self._variables[str(save_as)] = result
+            if secret_result:
+                self._secret_names.add(str(save_as))
 
     async def _run_subflow(self, node: dict[str, Any]) -> None:
         # Only ``path``/``inputs`` are interpolated: an inline ``doc`` is a
@@ -491,6 +529,8 @@ class FlowRunner:
             max_steps=self._max_steps,
         )
         child._flow_depth = self._flow_depth + 1
+        child._secrets = self._secrets
+        child._secret_names = self._secret_names
         await child.run(doc)
 
         outputs = config.get("outputs")
@@ -804,6 +844,19 @@ def validate_document(
     if doc.get("version") != FLOW_VERSION:
         problems.append(f"unsupported flow version {doc.get('version')!r}")
         return problems
+    variables = doc.get("variables")
+    if variables is not None and not isinstance(variables, (dict, list)):
+        problems.append("'variables' must be an object or a list")
+    elif isinstance(variables, dict):
+        for key in variables:
+            if not _identifier_ok(key):
+                problems.append(f"variable name {key!r} must be a plain identifier (no '$')")
+    elif isinstance(variables, list):
+        for item in variables:
+            if isinstance(item, dict) and not _identifier_ok(item.get("name")):
+                problems.append(
+                    f"variable name {item.get('name')!r} must be a plain identifier (no '$')"
+                )
 
     nodes: dict[str, dict[str, Any]] = {}
     for raw in doc.get("nodes") or []:
@@ -852,15 +905,39 @@ def validate_document(
                 inputs = config.get("inputs")
                 if inputs is not None and not isinstance(inputs, dict):
                     problems.append(f"node {node_id!r}: flow 'inputs' must be an object")
+                elif isinstance(inputs, dict):
+                    for name in inputs:
+                        if not _identifier_ok(name):
+                            problems.append(
+                                f"node {node_id!r}: input name {name!r} must be a plain identifier"
+                            )
                 outputs = config.get("outputs")
                 if outputs is not None and not isinstance(outputs, (list, dict)):
                     problems.append(f"node {node_id!r}: flow 'outputs' must be a list or object")
+                elif isinstance(outputs, dict):
+                    for parent, child in outputs.items():
+                        if not _identifier_ok(parent) or not _identifier_ok(child):
+                            problems.append(
+                                f"node {node_id!r}: output mapping {parent!r} -> {child!r} "
+                                "must use plain identifiers"
+                            )
+                elif isinstance(outputs, list):
+                    for name in outputs:
+                        if not _identifier_ok(name):
+                            problems.append(
+                                f"node {node_id!r}: output name {name!r} must be a plain identifier"
+                            )
                 if outputs is not None and scope != "isolated":
                     problems.append(f"node {node_id!r}: flow outputs requires scope=isolated")
         if kind == "set":
             config = node.get("config") or {}
             if not isinstance(config, dict) or not str(config.get("var") or ""):
                 problems.append(f"node {node_id!r}: set node needs config.var")
+            elif not _identifier_ok(config.get("var")):
+                problems.append(
+                    f"node {node_id!r}: set variable {config.get('var')!r} must be a plain "
+                    "identifier (no '$')"
+                )
         if kind == "if":
             condition = node.get("condition")
             if not isinstance(condition, dict) or not condition.get("var"):
@@ -869,6 +946,18 @@ def validate_document(
             loop = node.get("loop")
             if not isinstance(loop, dict) or not loop.get("mode"):
                 problems.append(f"node {node_id!r}: loop node needs loop.mode")
+            elif loop.get("mode") == "foreach":
+                for field in ("var", "as"):
+                    value = loop.get(field)
+                    if value is not None and not _identifier_ok(value):
+                        problems.append(
+                            f"node {node_id!r}: loop {field} {value!r} must be a plain identifier"
+                        )
+        save_as = node.get("save_as")
+        if save_as is not None and not _identifier_ok(save_as):
+            problems.append(
+                f"node {node_id!r}: save_as {save_as!r} must be a plain identifier (no '$')"
+            )
         if node.get("on_error") is not None:
             try:
                 _parse_on_error(node.get("on_error"))

@@ -642,6 +642,26 @@ class TestValidate:
         )
         assert "fail mode" in "\n".join(validate_document(doc))
 
+    def test_identifier_names_are_enforced(self) -> None:
+        doc = _doc(
+            [
+                {"id": "s", "kind": "start", "config": {}},
+                {"id": "set", "kind": "set", "config": {"var": "$bad", "value": "1"}},
+                {
+                    "id": "t",
+                    "kind": "tool",
+                    "tool": "test.typed_add",
+                    "config": {"a": 1, "b": 2},
+                    "save_as": "$bad",
+                },
+                {"id": "e", "kind": "end", "config": {}},
+            ],
+            _chain("s", "set", "t", "e"),
+        )
+        doc["variables"] = [{"name": "$x", "type": "string", "value": "v"}]
+        text = "\n".join(validate_document(doc, registry=_registry()))
+        assert text.count("plain identifier") >= 3
+
     def test_tool_schema_check(self) -> None:
         doc = _doc(
             [

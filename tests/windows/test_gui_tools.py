@@ -625,11 +625,11 @@ class TestHighlight:
 
 
 class TestFactoryAndFacade:
-    def test_factory_returns_26_tools(self) -> None:
+    def test_factory_returns_all_tools(self) -> None:
         from smithy.windows.tools import windows_tools
 
         tools = windows_tools()
-        assert len(tools) == 26
+        assert len(tools) == 30
         names = {t.name for t in tools}
         for expected in (
             "windows.scroll",
@@ -645,6 +645,11 @@ class TestFactoryAndFacade:
             "windows.find_image",
             "windows.click_image",
             "windows.ocr",
+            "excel.read",
+            "excel.write",
+            "excel.append",
+            "asset.get",
+            "asset.credential",
         ):
             assert expected in names
 

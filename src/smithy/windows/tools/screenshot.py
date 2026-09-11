@@ -147,8 +147,11 @@ def _capture_full_screen(save_path: Path, fmt: str) -> Path:
         shot = sct.grab(monitor)
         img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
 
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-    img.save(str(save_path), format=_pil_format(fmt))
+    try:
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        img.save(str(save_path), format=_pil_format(fmt))
+    finally:
+        img.close()
     return save_path
 
 
@@ -197,8 +200,11 @@ def _capture_window(pid: int, save_path: Path, fmt: str) -> Path:
         shot = sct.grab(monitor)
         img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
 
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-    img.save(str(save_path), format=_pil_format(fmt))
+    try:
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        img.save(str(save_path), format=_pil_format(fmt))
+    finally:
+        img.close()
     return save_path
 
 

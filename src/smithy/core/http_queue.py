@@ -49,6 +49,30 @@ class HttpQueueError(InfrastructureError):
 _RETRYABLE_STATUS: frozenset[int] = frozenset({502, 503, 504})
 _RETRY_BASE_SECONDS = 0.5
 _MAX_RETRY_BACKOFF_SECONDS = 30.0
+_MAX_RESPONSE_BYTES = 10_000_000
+
+
+def _check_no_redirect(response: Any, url: str, method: str) -> None:
+    """Fail when urlopen followed a redirect (token must stay on the original host)."""
+    geturl = getattr(response, "geturl", None)
+    if callable(geturl):
+        try:
+            final = str(geturl())
+        except Exception:
+            return
+        if final and final != url:
+            raise HttpQueueError(f"{method} {url} redirected to {final!r} — refused")
+
+
+def _read_capped(response: Any) -> bytes:
+    """Read a response with a size cap; tolerates stub `read()` without args."""
+    try:
+        raw = response.read(_MAX_RESPONSE_BYTES + 1)
+    except TypeError:
+        raw = response.read()
+    if isinstance(raw, str):
+        raw = raw.encode("utf-8")
+    return bytes(raw)
 
 _ENGINE_VERSION_UNSET = object()
 _engine_version_cached: object = _ENGINE_VERSION_UNSET
@@ -121,16 +145,20 @@ def _request(
         url,
         data=body,
         method=method,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {token}",
-        },
+        headers={"Content-Type": "application/json"},
     )
+    # Unredirected: urllib strips these on redirect, so a 302 to evil.com
+    # never receives the Bearer token.
+    request.add_unredirected_header("Authorization", f"Bearer {token}")
     attempt = 0
     while True:
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
-                raw = response.read().decode("utf-8")
+                _check_no_redirect(response, url, method)
+                raw_bytes = _read_capped(response)
+                if len(raw_bytes) > _MAX_RESPONSE_BYTES:
+                    raise HttpQueueError(f"{method} {url} response too large")
+                raw = raw_bytes.decode("utf-8")
         except urllib.error.HTTPError as exc:
             try:
                 if exc.code in _RETRYABLE_STATUS and attempt < max_retries:

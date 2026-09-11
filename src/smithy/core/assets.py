@@ -24,6 +24,20 @@ from smithy.core.errors import InvalidInput, PlatformError
 
 DEFAULT_ASSET_PREFIX = "SMITHY_ASSET_"
 
+_MAX_ASSET_BYTES = 1_000_000
+
+
+def _check_no_redirect(response: Any, url: str) -> None:
+    """Fail when urlopen followed a redirect away from *url*."""
+    geturl = getattr(response, "geturl", None)
+    if callable(geturl):
+        try:
+            final = str(geturl())
+        except Exception:
+            return
+        if final and final != url:
+            raise PlatformError(f"asset fetch refused redirect to {final!r}", source=None)
+
 
 def _normalize(name: str) -> str:
     return re.sub(r"[^A-Z0-9]+", "_", name.strip().upper())
@@ -170,10 +184,21 @@ class HttpAssetProvider:
         )
         if self._process_id:
             url += f"?process_id={urllib.parse.quote(self._process_id, safe='')}"
-        request = urllib.request.Request(url, headers={"Authorization": f"Bearer {self._token}"})
+        request = urllib.request.Request(url)
+        # Unredirected: never replayed to a redirect target.
+        request.add_unredirected_header("Authorization", f"Bearer {self._token}")
         try:
             with urllib.request.urlopen(request, timeout=self._timeout) as response:
-                data: Any = json.loads(response.read().decode("utf-8"))
+                _check_no_redirect(response, url)
+                try:
+                    raw = response.read(_MAX_ASSET_BYTES + 1)
+                except TypeError:
+                    raw = response.read()
+                if isinstance(raw, str):
+                    raw = raw.encode("utf-8")
+                if len(raw) > _MAX_ASSET_BYTES:
+                    raise PlatformError("asset response too large", source=None)
+                data: Any = json.loads(bytes(raw).decode("utf-8"))
         except urllib.error.HTTPError as exc:
             exc.close()
             if exc.code == 404:

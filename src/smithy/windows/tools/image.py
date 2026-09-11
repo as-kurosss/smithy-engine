@@ -23,6 +23,10 @@ from smithy.core.tool import AbstractTool
 
 _DEFAULT_CONFIDENCE = 0.8
 
+#: Search-region DoS guard: 8000x8000 ≈ 64M pixels ≈ 256MB RGBA.
+_MAX_REGION_PIXELS = 64_000_000
+_MAX_REGION_SIDE = 8000
+
 
 class FindImageTool(AbstractTool):
     """Locate a template image on screen; returns the match center."""
@@ -60,13 +64,18 @@ class FindImageTool(AbstractTool):
         }
 
     async def execute(self, config: dict[str, Any]) -> Any:
+        import asyncio as _asyncio
+
         template, region, confidence = _validate(config)
         try:
-            found, center, score = await run_blocking(_find_on_screen, template, region, confidence)
+            # CV work (mss/cv2) must not hog the single COM/UIA worker thread.
+            found, center, score = await _asyncio.to_thread(
+                _find_on_screen, template, region, confidence
+            )
         except (InvalidInput, PlatformError):
             raise
         except Exception as exc:
-            raise PlatformError(f"Image search failed: {exc}", source=exc) from exc
+            raise PlatformError("Image search failed", source=exc) from exc
         if not found:
             raise ElementNotFound(
                 f"Template {str(template)!r} not found on screen "
@@ -111,6 +120,8 @@ class ClickImageTool(AbstractTool):
         return schema
 
     async def execute(self, config: dict[str, Any]) -> Any:
+        import asyncio as _asyncio
+
         template, region, confidence = _validate(config)
         button = config.get("button", "left")
         if not isinstance(button, str) or button not in ("left", "right"):
@@ -127,11 +138,13 @@ class ClickImageTool(AbstractTool):
                 input_value=clicks,
             )
         try:
-            found, center, score = await run_blocking(_find_on_screen, template, region, confidence)
+            found, center, score = await _asyncio.to_thread(
+                _find_on_screen, template, region, confidence
+            )
         except (InvalidInput, PlatformError):
             raise
         except Exception as exc:
-            raise PlatformError(f"Image search failed: {exc}", source=exc) from exc
+            raise PlatformError("Image search failed", source=exc) from exc
         if not found:
             raise ElementNotFound(
                 f"Template {str(template)!r} not found on screen "
@@ -143,7 +156,7 @@ class ClickImageTool(AbstractTool):
         try:
             await run_blocking(_click_at, center[0], center[1], button, clicks)
         except Exception as exc:
-            raise PlatformError(f"Image click failed: {exc}", source=exc) from exc
+            raise PlatformError("Image click failed", source=exc) from exc
         return {
             "status": "clicked",
             "x": center[0],
@@ -199,6 +212,17 @@ def _validate(config: dict[str, Any]) -> tuple[Any, tuple[int, int, int, int] | 
             param="width",
             input_value=values,
         )
+    if (
+        values["width"] > _MAX_REGION_SIDE
+        or values["height"] > _MAX_REGION_SIDE
+        or values["width"] * values["height"] > _MAX_REGION_PIXELS
+    ):
+        raise InvalidInput(
+            f"Invalid region: {values['width']}x{values['height']} too large "
+            f"(max {_MAX_REGION_SIDE}px side, {_MAX_REGION_PIXELS} pixels)",
+            param="width",
+            input_value={"width": values["width"], "height": values["height"]},
+        )
     return template, (values["x"], values["y"], values["width"], values["height"]), confidence
 
 
@@ -230,7 +254,9 @@ def _find_on_screen(
         origin_x = int(grab_area.get("left", 0))
         origin_y = int(grab_area.get("top", 0))
         shot = sct.grab(grab_area)
-        frame = numpy.frombuffer(shot.bgra, dtype=numpy.uint8)
+        # Copy out of the mss buffer before the context closes: frombuffer
+        # would otherwise alias freed memory.
+        frame = numpy.frombuffer(shot.bgra, dtype=numpy.uint8).copy()
         frame = frame.reshape(shot.height, shot.width, 4)[:, :, :3]
 
     tpl_height, tpl_width = tpl.shape[:2]

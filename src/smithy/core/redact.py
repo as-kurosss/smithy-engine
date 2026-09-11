@@ -31,6 +31,15 @@ def redact_text(text: str, secrets: Iterable[str] | None) -> str:
     return text
 
 
+def _redact_key(key: Any, secrets: tuple[str, ...]) -> Any:
+    if isinstance(key, str):
+        for secret in secrets:
+            if secret and secret in key:
+                key = key.replace(secret, REDACTED)
+        return key
+    return key
+
+
 def _redact(value: Any, secrets: tuple[str, ...]) -> Any:
     if isinstance(value, str):
         for secret in secrets:
@@ -42,14 +51,14 @@ def _redact(value: Any, secrets: tuple[str, ...]) -> Any:
     if isinstance(value, tuple):
         return tuple(_redact(item, secrets) for item in value)
     if isinstance(value, dict):
-        return {key: _redact(item, secrets) for key, item in value.items()}
+        return {_redact_key(key, secrets): _redact(item, secrets) for key, item in value.items()}
     return value
 
 
 def redact_value(value: Any, secrets: Iterable[str] | None) -> Any:
     """Recursively redact secrets from a JSON-like value.
 
-    Only strings are inspected; dict keys are preserved. Non-container
+    Both string values and dict keys are scrubbed. Non-container
     values are returned unchanged.
     """
     normalized = _normalize(secrets)

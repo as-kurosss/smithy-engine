@@ -195,6 +195,11 @@ _ALLOWED_HANDLES: dict[str, frozenset[str]] = {
 #: ``asyncio.wait_for`` cannot cancel it).
 _DEFAULT_MAX_STEPS = 100_000
 
+#: Subflow file cap (DoS guard independent of node validation).
+_MAX_SUBFLOW_BYTES = 5_000_000
+#: Max tracked secret values (bounds memory on long runs).
+_MAX_SECRETS = 1000
+
 
 class FlowError(Exception):
     """Raised for flow misuse, unsupported constructs or node failures."""
@@ -448,6 +453,7 @@ class FlowRunner:
         self._selector_store = selector_store
         self._dev_capture = dev_capture
         self._secrets: list[str] = []
+        self._secrets_set: set[str] = set()
         self._secret_names: set[str] = set()
         self._globals: dict[str, Any] = {}
         self._flow_depth = 0
@@ -462,13 +468,21 @@ class FlowRunner:
 
     # ------------------------------------------------------------ interpolation
 
+    def _track_secret(self, value: str) -> None:
+        if not value or value in self._secrets_set:
+            return
+        if len(self._secrets) >= _MAX_SECRETS:
+            return
+        self._secrets_set.add(value)
+        self._secrets.append(value)
+
     def _resolve_asset(self, name: str) -> str:
         from smithy.core.assets import asset_provider_from_env
 
         assets = self._assets if self._assets is not None else asset_provider_from_env()
         value = str(assets.get(name))
         if value:
-            self._secrets.append(value)
+            self._track_secret(value)
         return value
 
     def _render_config(self, config: dict[str, Any]) -> str:
@@ -478,14 +492,18 @@ class FlowRunner:
     def _remember_secrets(self, value: Any) -> None:
         """Register secret string leaves so they are redacted everywhere."""
         for secret in _collect_strings(value):
-            if secret not in self._secrets:
-                self._secrets.append(secret)
+            self._track_secret(secret)
 
     def public_variables(self) -> dict[str, Any]:
-        """Variables safe to report back: secret-assigned names are removed."""
-        return {
-            key: value for key, value in self._variables.items() if key not in self._secret_names
-        }
+        """Variables safe to report back: secrets removed by name and by value."""
+        out: dict[str, Any] = {}
+        for key, value in self._variables.items():
+            if key in self._secret_names:
+                continue
+            if isinstance(value, str) and value in self._secrets_set:
+                continue
+            out[key] = value
+        return out
 
     def _interpolate(self, value: Any) -> Any:
         return interpolate(value, self._variables, resolve_asset=self._resolve_asset)
@@ -601,7 +619,20 @@ class FlowRunner:
             if not isinstance(path, str) or not path:
                 raise FlowError("flow node 'path' must be a non-empty string")
             try:
-                doc = json.loads(Path(path).read_text(encoding="utf-8"))
+                from smithy.core.files import ENV_FILE_ROOT, confine_path
+
+                confined = confine_path(Path(path), env_var=ENV_FILE_ROOT)
+                size = confined.stat().st_size if confined.is_file() else 0
+                if size > _MAX_SUBFLOW_BYTES:
+                    raise FlowError(f"subflow {path!r} too large ({size} bytes)")
+                # Off the event loop: plain file IO goes to the default
+                # thread pool, not the single COM/UIA worker thread.
+                raw_text: str = await asyncio.to_thread(confined.read_text, encoding="utf-8")
+                if len(raw_text.encode("utf-8")) > _MAX_SUBFLOW_BYTES:
+                    raise FlowError(f"subflow {path!r} too large")
+                doc = json.loads(raw_text)
+            except FlowError:
+                raise
             except (OSError, json.JSONDecodeError) as exc:
                 raise FlowError(f"cannot read subflow {path!r}: {exc}") from exc
         if not isinstance(doc, dict):
@@ -632,6 +663,7 @@ class FlowRunner:
         child._flow_depth = self._flow_depth + 1
         child._globals = self._globals
         child._secrets = self._secrets
+        child._secrets_set = self._secrets_set
         child._secret_names = self._secret_names
         await child.run(doc)
 

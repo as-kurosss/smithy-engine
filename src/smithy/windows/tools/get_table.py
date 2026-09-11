@@ -63,6 +63,12 @@ class GetTableTool(AbstractTool):
                 param="max_rows",
                 input_value=max_rows,
             )
+        if max_rows > 5000:
+            raise InvalidInput(
+                "Invalid 'max_rows': maximum is 5000 (use pagination)",
+                param="max_rows",
+                input_value=max_rows,
+            )
         element = await resolve_element(config)
         if element is None:
             raise ElementNotFound(

@@ -83,15 +83,32 @@ def _print_log(level: str, msg: str) -> None:
     print(f"[{level}] {msg}", flush=True)
 
 
+_MAX_FLOW_FILE_BYTES = 20_000_000
+
+
+def _read_capped(path: str) -> str:
+    p = Path(path)
+    try:
+        size = p.stat().st_size
+    except OSError:
+        size = 0
+    if size > _MAX_FLOW_FILE_BYTES:
+        raise ValueError(f"{path}: file too large ({size} bytes)")
+    text = p.read_text(encoding="utf-8")
+    if len(text.encode("utf-8")) > _MAX_FLOW_FILE_BYTES:
+        raise ValueError(f"{path}: file too large")
+    return text
+
+
 def _load_doc(path: str) -> dict[str, Any]:
-    document = json.loads(Path(path).read_text(encoding="utf-8"))
+    document = json.loads(_read_capped(path))
     if not isinstance(document, dict):
         raise ValueError(f"{path}: flow document must be a JSON object")
     return document
 
 
 def _load_vars_file(path: str) -> dict[str, Any]:
-    document: dict[str, Any] = json.loads(Path(path).read_text(encoding="utf-8"))
+    document: dict[str, Any] = json.loads(_read_capped(path))
     if not isinstance(document, dict):
         raise SystemExit(f"{path}: variables file must hold a JSON object")
     return document

@@ -99,6 +99,12 @@ class ExcelReadTool(_ExcelBase):
                 param="max_rows",
                 input_value=max_rows,
             )
+        if max_rows > 10_000:
+            raise InvalidInput(
+                "Invalid 'max_rows': maximum is 10000 (use pagination)",
+                param="max_rows",
+                input_value=max_rows,
+            )
         try:
             columns, rows = await run_blocking(_read_sync, path, sheet, header, max_rows)
         except FileNotFoundError as exc:
@@ -275,6 +281,9 @@ def _append_sync(path: Path, sheet: str | None, rows: list[list[Any]]) -> int:
         workbook.close()
 
 
+_MAX_WRITE_ROWS = 10_000
+
+
 def _check_rows(config: dict[str, Any]) -> list[list[Any]]:
     raw_rows = config.get("rows")
     if not isinstance(raw_rows, list) or not all(isinstance(row, list) for row in raw_rows):
@@ -282,6 +291,12 @@ def _check_rows(config: dict[str, Any]) -> list[list[Any]]:
             "Missing or invalid 'rows': expected a list of lists",
             param="rows",
             input_value=type(raw_rows).__name__ if not isinstance(raw_rows, list) else raw_rows,
+        )
+    if len(raw_rows) > _MAX_WRITE_ROWS:
+        raise InvalidInput(
+            f"Invalid 'rows': too many rows ({len(raw_rows)} > {_MAX_WRITE_ROWS})",
+            param="rows",
+            input_value=len(raw_rows),
         )
     return raw_rows
 

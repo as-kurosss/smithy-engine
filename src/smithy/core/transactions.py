@@ -53,6 +53,21 @@ _CLAIM_RETRY_BASE_SECONDS = 1.0
 _CLAIM_SETTLE_SECONDS = 5.0
 _HEARTBEAT_JOIN_TIMEOUT_SECONDS = 5.0
 
+#: Bound report memory on very long runs (counters stay exact; only the
+#: retained detail lists are capped).
+_MAX_REPORT_OUTCOMES = 10_000
+_MAX_REPORT_ERRORS = 1000
+
+
+def _record_outcome(report: TransactionReport, outcome: ItemOutcome) -> None:
+    if len(report.outcomes) < _MAX_REPORT_OUTCOMES:
+        list.append(report.outcomes, outcome)
+
+
+def _record_error(report: TransactionReport, message: str) -> None:
+    if len(report.errors) < _MAX_REPORT_ERRORS:
+        list.append(report.errors, message)
+
 
 class TransactionContextMiddleware:
     """Stamp ``transaction_id`` into ``ToolEvent.metadata`` when in a transaction."""
@@ -157,7 +172,10 @@ def _claim_with_retry(
         except (InfrastructureError, OSError) as exc:
             last = exc
             if attempt < _CLAIM_RETRIES:
-                time.sleep(_CLAIM_RETRY_BASE_SECONDS * 2**attempt)
+                import random
+
+                base = _CLAIM_RETRY_BASE_SECONDS * 2**attempt
+                time.sleep(base * (0.5 + random.random()))
     if last is None:
         raise InfrastructureError("claim failed without a specific error")
     raise last
@@ -167,7 +185,7 @@ def _lost_outcome(report: TransactionReport, item: ClaimedItem, message: str) ->
     """Append a system-failure outcome the backend refused to record."""
     report.system_failed += 1
     outcome = ItemOutcome(item.id, "system_failed", item.attempts, message)
-    report.errors.append(f"{item.id}: {message}")
+    _record_error(report, f"{item.id}: {message}")
     return outcome
 
 
@@ -186,7 +204,7 @@ def _apply_business(
 ) -> tuple[ItemOutcome, bool]:
     if lost is None:
         report.business_failed += 1
-        report.errors.append(f"{item.id}: {exc}")
+        _record_error(report, f"{item.id}: {exc}")
         return ItemOutcome(item.id, "business_failed", item.attempts, str(exc)), True
     return _lost_outcome(report, item, lost), False
 
@@ -196,7 +214,7 @@ def _apply_system(
 ) -> tuple[ItemOutcome, bool]:
     if lost is None:
         report.system_failed += 1
-        report.errors.append(f"{item.id}: {message}")
+        _record_error(report, f"{item.id}: {message}")
         return ItemOutcome(item.id, "system_failed", item.attempts, message), False
     return _lost_outcome(report, item, lost), False
 
@@ -363,7 +381,7 @@ def run_transactions(
         except (InfrastructureError, OSError) as exc:
             consecutive += 1
             message = f"claim failed: {type(exc).__name__}: {exc}"
-            report.errors.append(message)
+            _record_error(report, message)
             if consecutive >= stop_after_consecutive_system_errors:
                 report.stop_reason = "consecutive_system_errors"
                 break
@@ -416,7 +434,7 @@ def run_transactions(
             else:
                 outcome = _lost_outcome(report, item, lost)
             report.stop_reason = "stop_requested"
-            report.outcomes.append(outcome)
+            _record_outcome(report, outcome)
             _emit_progress(on_progress, outcome)
             break
         except Exception as exc:
@@ -442,10 +460,10 @@ def run_transactions(
             and outcome.status == "system_failed"
         ):
             report.stop_reason = "consecutive_system_errors"
-            report.outcomes.append(outcome)
+            _record_outcome(report, outcome)
             _emit_progress(on_progress, outcome)
             break
-        report.outcomes.append(outcome)
+        _record_outcome(report, outcome)
         _emit_progress(on_progress, outcome)
 
     report.consecutive_system_errors = consecutive
@@ -497,7 +515,7 @@ async def run_transactions_async(
         except (InfrastructureError, OSError) as exc:
             consecutive += 1
             message = f"claim failed: {type(exc).__name__}: {exc}"
-            report.errors.append(message)
+            _record_error(report, message)
             if consecutive >= stop_after_consecutive_system_errors:
                 report.stop_reason = "consecutive_system_errors"
                 break
@@ -562,7 +580,7 @@ async def run_transactions_async(
             else:
                 outcome = _lost_outcome(report, item, lost)
             report.stop_reason = "stop_requested"
-            report.outcomes.append(outcome)
+            _record_outcome(report, outcome)
             await _emit_progress_async(on_progress, outcome)
             break
         except Exception as exc:
@@ -598,10 +616,10 @@ async def run_transactions_async(
             and outcome.status == "system_failed"
         ):
             report.stop_reason = "consecutive_system_errors"
-            report.outcomes.append(outcome)
+            _record_outcome(report, outcome)
             await _emit_progress_async(on_progress, outcome)
             break
-        report.outcomes.append(outcome)
+        _record_outcome(report, outcome)
         await _emit_progress_async(on_progress, outcome)
 
     report.consecutive_system_errors = consecutive

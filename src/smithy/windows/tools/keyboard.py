@@ -357,14 +357,16 @@ class KeyboardTool(AbstractTool):
             await run_blocking(_send, keys)
         except ValueError as exc:
             raise InvalidInput(
-                f"Unknown key in {raw!r}: {exc}",
+                f"Unknown key: {exc}",
                 param="keys",
-                input_value=raw,
+                input_value="***",
             ) from exc
         except Exception as exc:
             raise PlatformError(
-                f"Failed to send keys for {raw!r}",
+                "Failed to send keys",
                 source=exc,
-                input_value=raw,
+                input_value="***",
             ) from exc
-        return {"status": "sent", "keys": raw, "normalized": keys}
+        # Do not echo raw keys (may contain typed secrets); normalized tokens
+        # describe structure without literal text.
+        return {"status": "sent", "length": len(raw)}

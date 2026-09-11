@@ -27,6 +27,10 @@ ENV_FILE_ROOT = "SMITHY_FILE_ROOT"
 
 _ACTIONS = ("read", "write", "append", "copy", "move", "delete", "exists", "wait_for", "list")
 
+#: Hard caps against OOM/DoS via flow configs (independent of the sandbox).
+_MAX_READ_BYTES = 10_000_000
+_MAX_LIST_ENTRIES = 5000
+
 
 def confine_path(path: Path, *, env_var: str = ENV_FILE_ROOT) -> Path:
     """Resolve *path* against the sandbox root named by *env_var* when set.
@@ -138,8 +142,26 @@ class FileTool(AbstractTool):
 
     async def _read(self, path: Path, config: dict[str, Any]) -> dict[str, Any]:
         encoding = _check_encoding(config)
+
+        def _read_capped() -> str:
+            size = path.stat().st_size if path.is_file() else 0
+            if size > _MAX_READ_BYTES:
+                raise InvalidInput(
+                    f"File too large ({size} bytes > {_MAX_READ_BYTES})",
+                    param="path",
+                    input_value=str(path),
+                )
+            text = path.read_text(encoding=encoding)
+            if len(text.encode(encoding, errors="replace")) > _MAX_READ_BYTES:
+                raise InvalidInput(
+                    f"File too large (> {_MAX_READ_BYTES} bytes)",
+                    param="path",
+                    input_value=str(path),
+                )
+            return text
+
         try:
-            text: str = await run_blocking(path.read_text, encoding=encoding)
+            text: str = await run_blocking(_read_capped)
         except FileNotFoundError as exc:
             raise PlatformError(f"File not found: {path}", source=exc) from exc
         except OSError as exc:
@@ -287,21 +309,24 @@ def _list_entries(path: Path, pattern: str) -> list[dict[str, Any]]:
         raise PlatformError(f"Not a directory: {path}")
     entries: list[dict[str, Any]] = []
     try:
-        items = sorted(path.glob(pattern))
+        count = 0
+        for item in sorted(path.glob(pattern)):
+            if count >= _MAX_LIST_ENTRIES:
+                break
+            try:
+                is_file = item.is_file()
+                entries.append(
+                    {
+                        "name": item.name,
+                        "type": "dir" if item.is_dir() else "file",
+                        "size": item.stat().st_size if is_file else None,
+                    }
+                )
+                count += 1
+            except OSError:
+                continue
     except (ValueError, OSError) as exc:
         raise PlatformError(f"Cannot list {path}: {exc}", source=exc) from exc
-    for item in items:
-        try:
-            is_file = item.is_file()
-            entries.append(
-                {
-                    "name": item.name,
-                    "type": "dir" if item.is_dir() else "file",
-                    "size": item.stat().st_size if is_file else None,
-                }
-            )
-        except OSError:
-            continue
     return entries
 
 

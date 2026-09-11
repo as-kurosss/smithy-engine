@@ -28,6 +28,10 @@ class InputTextTool(AbstractTool):
     - ``"CTRL"`` — type literal text "CTRL"
     """
 
+    # Typed text is often a password: track the result as a secret so the
+    # runner redacts it from logs/traces and keeps it out of snapshots.
+    produces_secrets = True
+
     @property
     def name(self) -> str:
         return "windows.input_text"
@@ -82,5 +86,7 @@ class InputTextTool(AbstractTool):
         except (InvalidInput, PlatformError):
             raise
         except Exception as exc:
-            raise PlatformError(f"SendKeys failed: {exc}", source=exc) from exc
-        return {"status": "sent", "text": raw}
+            raise PlatformError("SendKeys failed", source=exc) from exc
+        # Do not echo the typed text: it may be a password. Length is enough
+        # for automation checks; the runner tracks the value as a secret.
+        return {"status": "sent", "length": len(raw)}

@@ -93,7 +93,10 @@ class FlowTracer:
         )
         now = time.monotonic()
         if self._counter <= _ALWAYS_WRITE_LIMIT or now - self._last_write >= self._write_interval:
-            self._write()
+            # Off the event loop: whole-document rewrites are O(N) JSON+IO.
+            import asyncio
+
+            await asyncio.to_thread(self._write)
         return event
 
     def nodes(self) -> list[dict[str, Any]]:

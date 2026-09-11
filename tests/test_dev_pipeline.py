@@ -13,7 +13,7 @@ from smithcore import run_flow
 from smithcore.core.queue import SqliteQueue
 from smithcore.core.selectors import SelectorStore
 from smithcore.core.tool import AbstractTool
-from smithcore.facade import Smithcore
+from smithcore.facade import SmithCore
 
 
 class EchoTool(AbstractTool):
@@ -74,7 +74,7 @@ class TestFlowTracer:
             "editor", {"automation_id": "15", "class_name": "Edit"}
         )
         trace_path = tmp_path / "bot.flow.json"
-        bot = Smithcore(
+        bot = SmithCore(
             tools=[ClickStub()],
             selector_store=tmp_path / "sel.json",
             dev_capture=True,
@@ -94,7 +94,7 @@ class TestFlowTracer:
     @pytest.mark.asyncio
     async def test_failed_calls_are_not_steps(self, tmp_path: Path) -> None:
         trace_path = tmp_path / "t.flow.json"
-        bot = Smithcore(tools=[FailingTool(), EchoTool()], trace=trace_path)
+        bot = SmithCore(tools=[FailingTool(), EchoTool()], trace=trace_path)
         with pytest.raises(RuntimeError, match="boom"):
             await bot.call("test.fail")
         await bot.call("test.echo", a=1)
@@ -105,7 +105,7 @@ class TestFlowTracer:
     @pytest.mark.asyncio
     async def test_two_calls_chain_linearly(self, tmp_path: Path) -> None:
         trace_path = tmp_path / "t.flow.json"
-        bot = Smithcore(tools=[EchoTool()], trace=trace_path)
+        bot = SmithCore(tools=[EchoTool()], trace=trace_path)
         await bot.call("test.echo", step=1)
         await bot.call("test.echo", step=2)
         doc = json.loads(trace_path.read_text(encoding="utf-8"))

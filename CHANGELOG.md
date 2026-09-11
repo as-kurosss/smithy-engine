@@ -305,7 +305,7 @@ Dev → delivery pipeline: packs, tracer, transactional runs, flow hardening.
   `selectors.json` are picked up from the pack automatically.
   A tampered file (any listed file modified, missing, or
   unchecksummed entry) makes the runner refuse to start (exit 1).
-- **Flow tracer** — `Smithcore(trace="bot.flow.json")`: every successful
+- **Flow tracer** — `SmithCore(trace="bot.flow.json")`: every successful
   tool call is recorded as a v2 `tool` node; keyed calls are traced as
   `key` (portable selectors), resolved fields are stripped; failed calls
   are not steps. The document is rewritten after every call (crash-safe).
@@ -383,7 +383,7 @@ executor and the runner CLI.
 - `SelectorStore` (`smithcore.core.selectors`) — key → selector registry
   persisted as JSON (atomic writes, survives corrupt files).
 - Facade keyed selectors + dev capture:
-  `Smithcore(selector_store=..., dev_capture=True)` (or env
+  `SmithCore(selector_store=..., dev_capture=True)` (or env
   `SMITHCORE_DEV_CAPTURE=1`) and `key=` on `click`, `wait`, `input_text`,
   `set_text`, `get_element`, `hover`, `exists`, `get_text`,
   `highlight`, `get_table`, `control_action`.
@@ -393,7 +393,7 @@ executor and the runner CLI.
   missing key is a hard error and a stale selector fails honestly.
 
   ```python
-  bot = Smithcore(tools=windows_tools(), dev_capture=True)
+  bot = SmithCore(tools=windows_tools(), dev_capture=True)
   await bot.click(key="login.submit")   # first run: capture; then: silent
   ```
 
@@ -418,7 +418,7 @@ executor and the runner CLI.
   built-in Windows OCR engine, zero extra dependencies (Windows
   PowerShell 5.1 WinRT interop); optional `language` (BCP-47).
 - Runtime secrets: `smithcore.core.assets` (`AssetProvider` protocol +
-  `EnvAssetProvider` over `SMITHCORE_ASSET_*`), `Smithcore(assets=...)` and
+  `EnvAssetProvider` over `SMITHCORE_ASSET_*`), `SmithCore(assets=...)` and
   `bot.asset("db.password")`. Values are fetched in bot code and never
   pass through tool configs/results — they cannot leak into the JSONL
   audit log.
@@ -499,7 +499,7 @@ Playwright-style codegen: recorded flows render as runnable bot scripts.
 
 - Code generation (`windows/tools/selector_capture/emit.py`): any
   capture file (`single`/`series`/`record` — same `nodes` shape)
-  renders as a `Smithcore(tools=windows_tools())` script with one
+  renders as a `SmithCore(tools=windows_tools())` script with one
   `await bot.*` call per node. New `emit` CLI subcommand
   (`emit -i flow.json -o bot.py [--clip]`) plus `--emit BOT.py` on
   every record mode for one-pass record-to-code.
@@ -575,7 +575,7 @@ GUI batch: comfortable desktop automation on top of the 0.2.0 core.
   `pyperclip`), `windows.list_elements` (direct-children dump for
   discovering automation IDs), `windows.highlight` (colored rectangle
   flash for debugging selectors).
-- `Smithcore` facade methods for every new tool (`scroll`, `hover`,
+- `SmithCore` facade methods for every new tool (`scroll`, `hover`,
   `exists`, `get_text`, `window`, `select`, `drag`, `clipboard`,
   `list_elements`, `highlight`), all accepting an optional `handle` for
   PID scoping.
@@ -632,4 +632,4 @@ First minor release: transactions, config, and hardening on top of the
 
 - Windows UI tools (process, click, wait, delay, screenshot, input_text,
   keyboard, set_text, get_element), selector capture CLI, middleware
-  event bus, `@tool` decorator, `Smithcore` facade.
+  event bus, `@tool` decorator, `SmithCore` facade.

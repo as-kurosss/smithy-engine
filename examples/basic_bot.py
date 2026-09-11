@@ -5,13 +5,13 @@ Requires: pip install smithcore[windows]
 
 import asyncio
 
-from smithcore import Smithcore
+from smithcore import SmithCore
 from smithcore.windows.tools.click import ClickTool
 from smithcore.windows.tools.delay import DelayTool
 from smithcore.windows.tools.process import ProcessTool
 from smithcore.windows.tools.wait import WaitTool
 
-bot = Smithcore(tools=[ProcessTool(), ClickTool(), WaitTool(), DelayTool()])
+bot = SmithCore(tools=[ProcessTool(), ClickTool(), WaitTool(), DelayTool()])
 
 
 async def main() -> None:

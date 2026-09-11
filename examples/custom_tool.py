@@ -5,7 +5,7 @@ Requires: pip install smithcore
 
 import asyncio
 
-from smithcore import Smithcore, tool
+from smithcore import SmithCore, tool
 
 
 @tool("greet", description="Greet a person by name")
@@ -21,7 +21,7 @@ async def add(config: dict) -> dict:
     return {"result": a + b}
 
 
-bot = Smithcore(tools=[greet, add])
+bot = SmithCore(tools=[greet, add])
 
 
 async def main() -> None:

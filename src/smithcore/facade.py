@@ -1,4 +1,4 @@
-"""Smithcore — Facade for creating RPA bots with simple API."""
+"""SmithCore — Facade for creating RPA bots with simple API."""
 
 from __future__ import annotations
 
@@ -50,12 +50,12 @@ class SetTextResult:
     status: str
 
 
-class Smithcore:
+class SmithCore:
     """Main SDK class for creating RPA bots.
 
     Usage::
 
-        bot = Smithcore(tools=[ClickTool()])
+        bot = SmithCore(tools=[ClickTool()])
         app = await bot.process_run("notepad.exe")
         await bot.click(app, name="File")
         await bot.process_stop(app)

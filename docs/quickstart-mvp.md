@@ -1,6 +1,6 @@
 # MVP quickstart: designer → orchestrator → agent
 
-This is the shortest path to a **showable** Smithcore setup: edit a Windows flow
+This is the shortest path to a **showable** SmithCore setup: edit a Windows flow
 in the designer, publish it to the orchestrator as a pack, and run it on a
 Windows agent. No Python in the flow and no runner shim — packs ship *flows*,
 the engine executes them against its registered tools.

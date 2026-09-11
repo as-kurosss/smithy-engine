@@ -1,7 +1,7 @@
 """FlowTracer — record facade tool executions as a linear v2 flow document.
 
 The "converter" in the dev→delivery pipeline: run a bot under development
-with ``Smithcore(trace="bot.flow.json")`` and every successful tool call
+with ``SmithCore(trace="bot.flow.json")`` and every successful tool call
 becomes a ``tool`` node. Selectors resolved through the keyed store are
 traced as ``key`` (portable), not as resolved fields. The document is
 re-written periodically, so a crashed dev run still leaves a valid

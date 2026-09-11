@@ -1,4 +1,4 @@
-"""Smithcore — Free Python RPA engine for creating automation bots."""
+"""SmithCore — Free Python RPA engine for creating automation bots."""
 
 from smithcore.core.config import Config, load_config
 from smithcore.core.errors import (
@@ -39,7 +39,7 @@ from smithcore.facade import (
     InputTextResult,
     ProcessHandle,
     SetTextResult,
-    Smithcore,
+    SmithCore,
 )
 from smithcore.flow import FlowError, FlowRunner
 from smithcore.pack import (
@@ -91,7 +91,7 @@ __all__ = [
     "RetryTool",
     "SelectorStore",
     "SetTextResult",
-    "Smithcore",
+    "SmithCore",
     "SqliteQueue",
     "InfrastructureError",
     "TEMPLATE_FILE",

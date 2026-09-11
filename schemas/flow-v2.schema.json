@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/as-kurosss/smithcore-engine/main/schemas/flow-v2.schema.json",
-  "title": "Smithcore flow document",
+  "title": "SmithCore flow document",
   "description": "Versioned contract for the smithcore flow file format (v2). Compatibility rules: adding optional fields does NOT bump the version; removing/renaming fields or changing semantics requires v3 plus a migration path. Readers must reject unknown versions with an explicit error.",
   "type": "object",
   "required": ["version", "nodes", "edges"],

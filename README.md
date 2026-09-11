@@ -1,4 +1,4 @@
-# Smithcore
+# SmithCore
 
 Free Python RPA engine — create automation bots with simple async API.
 
@@ -6,10 +6,10 @@ Free Python RPA engine — create automation bots with simple async API.
 
 ```python
 import asyncio
-from smithcore import Smithcore
+from smithcore import SmithCore
 from smithcore.windows.tools import windows_tools
 
-bot = Smithcore(tools=windows_tools())
+bot = SmithCore(tools=windows_tools())
 
 
 async def main() -> None:
@@ -66,7 +66,7 @@ All UI tools accept optional `pid` (or a `ProcessHandle`) to scope element searc
 Create tools from simple async functions:
 
 ```python
-from smithcore import Smithcore, tool
+from smithcore import SmithCore, tool
 
 
 @tool("greet", description="Greet a person")
@@ -75,7 +75,7 @@ async def greet(config: dict) -> dict:
     return {"message": f"Hello, {name}!"}
 
 
-bot = Smithcore(tools=[greet])
+bot = SmithCore(tools=[greet])
 
 
 async def main() -> None:
@@ -96,7 +96,7 @@ capture, persists it to `selectors.json`, and retries. In production
 (no `SMITHCORE_DEV_CAPTURE`) both fail honestly:
 
 ```python
-bot = Smithcore(tools=windows_tools(), dev_capture=True)
+bot = SmithCore(tools=windows_tools(), dev_capture=True)
 await bot.click(key="login.submit")   # first run: capture; then: silent
 await bot.input_text(key="login.password", text=bot.asset("login.password"))
 ```
@@ -142,7 +142,7 @@ and `selectors.json` are picked up automatically):
 python -m smithcore.run_flow --pack bot_dir --stage process
 ```
 
-The tracer is the dev-side "converter": `Smithcore(trace="bot.flow.json")`
+The tracer is the dev-side "converter": `SmithCore(trace="bot.flow.json")`
 records every successful tool call as a v2 `tool` node, keyed calls as
 portable `key` references — run your bot script once, feed the resulting
 flow document into the pack.
@@ -290,7 +290,7 @@ python -m smithcore.windows.tools.selector_capture emit -i flow.json -o bot.py
 python -m smithcore.windows.tools.selector_capture record -o flow.json --emit bot.py
 ```
 
-The script uses `Smithcore(tools=windows_tools())` with one `await bot.*`
+The script uses `SmithCore(tools=windows_tools())` with one `await bot.*`
 call per node. No magic: the recorder never sees the launched process
 (so there's a `TODO` showing `process_run` + PID scoping), uncaptured
 `input_text` gets an explicit `text="TODO: fill in"` placeholder, and
@@ -437,8 +437,8 @@ mypy src/smithcore --strict  # type check
 
 ```
 src/smithcore/
-├── __init__.py          — Public API: Smithcore, ProcessHandle, Tool, errors
-├── facade.py            — Smithcore facade (async tool dispatch, keyed selectors)
+├── __init__.py          — Public API: SmithCore, ProcessHandle, Tool, errors
+├── facade.py            — SmithCore facade (async tool dispatch, keyed selectors)
 ├── flow.py              — FlowRunner (flow-v2 executor: tool/flow/set/if/loop nodes)
 ├── run_flow.py          — Runner CLI (--set/--vars/--tools/--validate/--pack/--transactional)
 ├── pack.py              — Packs: manifest build/verify, zip, fetch (SHA-256 integrity)

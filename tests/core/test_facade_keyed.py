@@ -10,7 +10,7 @@ import pytest
 from smithcore.core.errors import ElementNotFound, InvalidInput
 from smithcore.core.selectors import SelectorStore
 from smithcore.core.tool import AbstractTool
-from smithcore.facade import Smithcore
+from smithcore.facade import SmithCore
 from smithcore.windows.tools.selector_capture.api import CapturedSelector
 
 
@@ -69,7 +69,7 @@ class TestKeyedConfig:
         SelectorStore(store_path).put("ok", {"name": "OK", "control_type": "button"})
 
         tool = _StubTool("windows.click", [{"status": "clicked"}])
-        bot = Smithcore(tools=[tool], selector_store=store_path, dev_capture=True)
+        bot = SmithCore(tools=[tool], selector_store=store_path, dev_capture=True)
         await bot.click(key="ok")
 
         assert used == []
@@ -83,7 +83,7 @@ class TestKeyedConfig:
         store_path = tmp_path / "selectors.json"
 
         tool = _StubTool("windows.click", [{"status": "clicked"}])
-        bot = Smithcore(tools=[tool], selector_store=store_path, dev_capture=True)
+        bot = SmithCore(tools=[tool], selector_store=store_path, dev_capture=True)
         await bot.click(key="submit")
 
         assert len(used) == 1
@@ -99,7 +99,7 @@ class TestKeyedConfig:
     ) -> None:
         used = _patch_capture(monkeypatch, [])
         tool = _StubTool("windows.click", [{"status": "clicked"}])
-        bot = Smithcore(tools=[tool], selector_store=tmp_path / "s.json", dev_capture=False)
+        bot = SmithCore(tools=[tool], selector_store=tmp_path / "s.json", dev_capture=False)
         with pytest.raises(InvalidInput, match="SMITHCORE_DEV_CAPTURE"):
             await bot.click(key="submit")
         assert tool.calls == []
@@ -114,7 +114,7 @@ class TestKeyedConfig:
         SelectorStore(store_path).put("ok", {"name": "StoredName"})
 
         tool = _StubTool("windows.click", [{"status": "clicked"}])
-        bot = Smithcore(tools=[tool], selector_store=store_path, dev_capture=True)
+        bot = SmithCore(tools=[tool], selector_store=store_path, dev_capture=True)
         await bot.click(key="ok", name="Explicit")
 
         assert tool.calls[0]["name"] == "Explicit"
@@ -128,7 +128,7 @@ class TestKeyedConfig:
         SelectorStore(store_path).put("ok", {"name": "Stale"})
 
         tool = _StubTool("windows.click", [ElementNotFound("gone"), {"status": "clicked"}])
-        bot = Smithcore(tools=[tool], selector_store=store_path, dev_capture=True)
+        bot = SmithCore(tools=[tool], selector_store=store_path, dev_capture=True)
         result = await bot.click(key="ok")
 
         assert result.status == "clicked"
@@ -148,7 +148,7 @@ class TestKeyedConfig:
         SelectorStore(store_path).put("ok", {"name": "Stale"})
 
         tool = _StubTool("windows.click", [ElementNotFound("gone")])
-        bot = Smithcore(tools=[tool], selector_store=store_path, dev_capture=False)
+        bot = SmithCore(tools=[tool], selector_store=store_path, dev_capture=False)
         with pytest.raises(ElementNotFound):
             await bot.click(key="ok")
         assert len(tool.calls) == 1
@@ -162,7 +162,7 @@ class TestKeyedOtherTools:
         SelectorStore(store_path).put("dlg", {"name": "Dialog"})
 
         tool = _StubTool("windows.wait", [True])
-        bot = Smithcore(tools=[tool], selector_store=store_path, dev_capture=True)
+        bot = SmithCore(tools=[tool], selector_store=store_path, dev_capture=True)
         assert await bot.wait(key="dlg", timeout_ms=100) is True
         assert tool.calls[0]["name"] == "Dialog"
         assert tool.calls[0]["wait_for"] == "appear"
@@ -173,12 +173,12 @@ class TestKeyedOtherTools:
         SelectorStore(store_path).put("edit", {"automation_id": "edit1"})
 
         tool = _StubTool("windows.set_text", [{"status": "set"}])
-        bot = Smithcore(tools=[tool], selector_store=store_path, dev_capture=True)
+        bot = SmithCore(tools=[tool], selector_store=store_path, dev_capture=True)
         await bot.set_text(key="edit", text="hello")
         assert tool.calls[0] == {"text": "hello", "automation_id": "edit1"}
 
         tool2 = _StubTool("windows.input_text", [{"status": "sent"}])
-        bot2 = Smithcore(tools=[tool2], selector_store=store_path, dev_capture=True)
+        bot2 = SmithCore(tools=[tool2], selector_store=store_path, dev_capture=True)
         await bot2.input_text(key="edit", text="hi")
         assert tool2.calls[0] == {"text": "hi", "automation_id": "edit1"}
 
@@ -188,7 +188,7 @@ class TestKeyedOtherTools:
         SelectorStore(store_path).put("lbl", {"name": "Total"})
 
         tool = _StubTool("windows.get_text", [{"text": "1500"}])
-        bot = Smithcore(tools=[tool], selector_store=store_path, dev_capture=True)
+        bot = SmithCore(tools=[tool], selector_store=store_path, dev_capture=True)
         assert await bot.get_text(key="lbl") == "1500"
         assert tool.calls[0]["name"] == "Total"
 
@@ -198,7 +198,7 @@ class TestKeyedOtherTools:
         SelectorStore(store_path).put("x", {"name": "X"})
 
         tool = _StubTool("windows.exists", [False, False])
-        bot = Smithcore(tools=[tool], selector_store=store_path, dev_capture=True)
+        bot = SmithCore(tools=[tool], selector_store=store_path, dev_capture=True)
         assert await bot.exists(key="x") is False
         assert len(tool.calls) == 1
 
@@ -206,10 +206,10 @@ class TestKeyedOtherTools:
 class TestDevCaptureEnv:
     def test_env_enables_dev_capture(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv("SMITHCORE_DEV_CAPTURE", "1")
-        bot = Smithcore(selector_store=tmp_path / "s.json")
+        bot = SmithCore(selector_store=tmp_path / "s.json")
         assert bot._dev_capture is True
 
     def test_explicit_beats_env(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv("SMITHCORE_DEV_CAPTURE", "1")
-        bot = Smithcore(selector_store=tmp_path / "s.json", dev_capture=False)
+        bot = SmithCore(selector_store=tmp_path / "s.json", dev_capture=False)
         assert bot._dev_capture is False

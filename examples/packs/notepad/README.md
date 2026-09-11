@@ -31,7 +31,7 @@ for it and instantiate the pack per client:
 {
   "schema": "smithcore-template-v1",
   "title": "Notepad demo",
-  "params": [{ "name": "text", "type": "string", "default": "Hello from Smithcore!" }]
+  "params": [{ "name": "text", "type": "string", "default": "Hello from SmithCore!" }]
 }
 ```
 
@@ -44,7 +44,7 @@ binds to a client secret at instantiation time).
 
 ```powershell
 # from the repo root, in a venv with the windows extras:
-smithcore-run-flow --pack examples\packs\notepad --stage process --set text="Hello from Smithcore!"
+smithcore-run-flow --pack examples\packs\notepad --stage process --set text="Hello from SmithCore!"
 # or validate without executing:
 smithcore-run-flow examples\packs\notepad\flow.json --validate
 ```

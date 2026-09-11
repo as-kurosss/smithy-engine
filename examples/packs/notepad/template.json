@@ -10,7 +10,7 @@
       "name": "text",
       "type": "string",
       "label": "Text to type",
-      "default": "Hello from Smithcore!",
+      "default": "Hello from SmithCore!",
       "required": true
     }
   ]

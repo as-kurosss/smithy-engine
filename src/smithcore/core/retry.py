@@ -5,7 +5,7 @@ wrapping a tool in :class:`RetryTool` retries ``ElementNotFound`` (or any
 chosen exception) a few times with a pause in between, instead of failing
 the whole transaction at once::
 
-    bot = Smithcore(tools=[RetryTool(ClickTool(), attempts=3, delay_ms=500)])
+    bot = SmithCore(tools=[RetryTool(ClickTool(), attempts=3, delay_ms=500)])
 """
 
 from __future__ import annotations

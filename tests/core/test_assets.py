@@ -10,7 +10,7 @@ from smithcore.core.assets import DEFAULT_ASSET_PREFIX, EnvAssetProvider
 from smithcore.core.errors import InvalidInput
 from smithcore.core.events import ToolEvent
 from smithcore.core.tool import tool
-from smithcore.facade import Smithcore
+from smithcore.facade import SmithCore
 
 
 class TestEnvAssetProvider:
@@ -48,14 +48,14 @@ class TestEnvAssetProvider:
 class TestFacadeAsset:
     def test_default_provider(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("SMITHCORE_ASSET_TOKEN", "abc")
-        assert Smithcore().asset("token") == "abc"
+        assert SmithCore().asset("token") == "abc"
 
     def test_custom_provider(self) -> None:
         class StaticProvider:
             def get(self, name: str) -> str:
                 return f"value:{name}"
 
-        assert Smithcore(assets=StaticProvider()).asset("x") == "value:x"
+        assert SmithCore(assets=StaticProvider()).asset("x") == "value:x"
 
 
 class TestFacadeSecretRedaction:
@@ -75,7 +75,7 @@ class TestFacadeSecretRedaction:
             def get(self, name: str) -> str:
                 return "s3cret-token"
 
-        bot = Smithcore(tools=[echo], assets=StaticProvider())
+        bot = SmithCore(tools=[echo], assets=StaticProvider())
         bot.add_middleware(capture)
         secret = bot.asset("token")
         await bot.call("echo", text=secret)

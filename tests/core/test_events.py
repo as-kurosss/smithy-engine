@@ -9,7 +9,7 @@ import pytest
 from smithcore.core.errors import InvalidInput
 from smithcore.core.events import EventBus, ToolEvent
 from smithcore.core.tool import AbstractTool
-from smithcore.facade import Smithcore
+from smithcore.facade import SmithCore
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -144,11 +144,11 @@ class TestEventBus:
 
 
 # ---------------------------------------------------------------------------
-# Smithcore middleware integration
+# SmithCore middleware integration
 # ---------------------------------------------------------------------------
 
 
-class TestSmithcoreMiddleware:
+class TestSmithCoreMiddleware:
     def test_add_middleware(self) -> None:
         bus = EventBus()
 
@@ -166,7 +166,7 @@ class TestSmithcoreMiddleware:
             received.append(event)
             return event
 
-        bot = Smithcore(tools=[StubTool()])
+        bot = SmithCore(tools=[StubTool()])
         bot.add_middleware(collector)
         await bot.call("stub.tool", x=1)
 
@@ -186,7 +186,7 @@ class TestSmithcoreMiddleware:
             received.append(event)
             return event
 
-        bot = Smithcore(tools=[FailTool()])
+        bot = SmithCore(tools=[FailTool()])
         bot.add_middleware(collector)
         with pytest.raises(InvalidInput):
             await bot.call("stub.fail")
@@ -209,7 +209,7 @@ class TestSmithcoreMiddleware:
             events.append("b")
             return event
 
-        bot = Smithcore(tools=[StubTool()])
+        bot = SmithCore(tools=[StubTool()])
         bot.add_middleware(a)
         bot.add_middleware(b)
         await bot.call("stub.tool")

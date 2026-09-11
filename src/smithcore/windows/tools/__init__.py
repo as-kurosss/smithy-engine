@@ -15,14 +15,14 @@ def windows_tools(
     *,
     allowed_commands: Iterable[str] | None = None,
 ) -> list[Tool]:
-    """Build the default Windows tool set for :class:`Smithcore`.
+    """Build the default Windows tool set for :class:`SmithCore`.
 
     Imports are function-local so that importing this package stays cheap
     and never pulls UIA dependencies at module import time::
 
         from smithcore.windows.tools import windows_tools
 
-        bot = Smithcore(tools=windows_tools())
+        bot = SmithCore(tools=windows_tools())
 
     Args:
         allowed_commands: Forwarded to :class:`ProcessTool` — executables

@@ -80,7 +80,7 @@ def tool(
             name = config.get("name", "World")
             return {"message": f"Hello, {name}!"}
 
-        bot = Smithcore(tools=[greet])
+        bot = SmithCore(tools=[greet])
         await bot.call("greet", name="Alice")
 
     Args:

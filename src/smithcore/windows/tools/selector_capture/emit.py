@@ -2,7 +2,7 @@
 
 Desktop equivalent of Playwright's codegen output: takes the ``nodes``
 written by any capture mode (``single`` is just a one-node flow) and
-emits a :class:`Smithcore` bot that replays them.
+emits a :class:`SmithCore` bot that replays them.
 
 Honesty rules (same spirit as selector ranking — no made-up stability):
 
@@ -35,7 +35,7 @@ _TEXT_PLACEHOLDER = "TODO: fill in"
 
 
 def emit_bot(nodes: Sequence[Mapping[str, Any]], *, source: str = "flow.json") -> str:
-    """Render *nodes* as a replayable ``Smithcore`` bot script.
+    """Render *nodes* as a replayable ``SmithCore`` bot script.
 
     Args:
         nodes: Flow nodes (``{\"tool\", \"args\"}`` mappings) as written by
@@ -57,10 +57,10 @@ def emit_bot(nodes: Sequence[Mapping[str, Any]], *, source: str = "flow.json") -
         "",
         "import asyncio",
         "",
-        "from smithcore import Smithcore",
+        "from smithcore import SmithCore",
         "from smithcore.windows.tools import windows_tools",
         "",
-        "bot = Smithcore(tools=windows_tools())",
+        "bot = SmithCore(tools=windows_tools())",
         "",
         "",
         "async def main() -> None:",

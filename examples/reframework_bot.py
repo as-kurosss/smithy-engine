@@ -28,7 +28,7 @@ from smithcore import (
     ClaimedItem,
     HttpQueue,
     Queue,
-    Smithcore,
+    SmithCore,
     SqliteQueue,
     TransactionContextMiddleware,
     load_config,
@@ -47,7 +47,7 @@ CONFIG = load_config(
     required=["robot.queue", "robot.run_id", "retry.max_attempts"],
 )
 
-bot = Smithcore(tools=[ProcessTool(), ClickTool(), WaitTool()])
+bot = SmithCore(tools=[ProcessTool(), ClickTool(), WaitTool()])
 bot.add_middleware(TransactionContextMiddleware())  # stamp transaction_id into events
 
 

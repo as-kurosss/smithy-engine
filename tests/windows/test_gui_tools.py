@@ -655,9 +655,9 @@ class TestFactoryAndFacade:
 
     @pytest.mark.asyncio
     async def test_facade_click_forwards_params(self) -> None:
-        from smithcore.facade import Smithcore
+        from smithcore.facade import SmithCore
 
-        bot = Smithcore(tools=[])
+        bot = SmithCore(tools=[])
         with patch.object(bot, "_execute", new=AsyncMock(return_value={"status": "clicked"})) as ex:
             await bot.click(x=5, y=6, button="right", clicks=2)
         ex.assert_called_once()
@@ -667,18 +667,18 @@ class TestFactoryAndFacade:
 
     @pytest.mark.asyncio
     async def test_facade_wait_forwards_wait_for(self) -> None:
-        from smithcore.facade import Smithcore
+        from smithcore.facade import SmithCore
 
-        bot = Smithcore(tools=[])
+        bot = SmithCore(tools=[])
         with patch.object(bot, "_execute", new=AsyncMock(return_value=True)) as ex:
             assert await bot.wait(name="OK", wait_for="disappear") is True
         assert ex.call_args[0][1]["wait_for"] == "disappear"
 
     @pytest.mark.asyncio
     async def test_facade_scroll_hover_exists_get_text(self) -> None:
-        from smithcore.facade import Smithcore
+        from smithcore.facade import SmithCore
 
-        bot = Smithcore(tools=[])
+        bot = SmithCore(tools=[])
         with patch.object(bot, "_execute", new=AsyncMock(return_value={"status": "scrolled"})):
             out = await bot.scroll(direction="up", wheel_clicks=1)
             assert out["status"] == "scrolled"
@@ -696,9 +696,9 @@ class TestFactoryAndFacade:
 
     @pytest.mark.asyncio
     async def test_facade_window_select_drag_clipboard_list_highlight(self) -> None:
-        from smithcore.facade import Smithcore
+        from smithcore.facade import SmithCore
 
-        bot = Smithcore(tools=[])
+        bot = SmithCore(tools=[])
         with patch.object(
             bot,
             "_execute",

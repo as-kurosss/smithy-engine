@@ -1,6 +1,6 @@
 """Config loader demo — load, use, try to break. No UI needed, just run it.
 
-Requires: pip install smithy (pure stdlib otherwise)
+Requires: pip install smithcore (pure stdlib otherwise)
 
     python examples/config_demo.py
 """
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from smithy import ConfigError, load_config
+from smithcore import ConfigError, load_config
 
 HERE = Path(__file__).resolve().parent
 

@@ -1,4 +1,4 @@
-"""Tests for smithy.core.files — FileTool."""
+"""Tests for smithcore.core.files — FileTool."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from smithy.core.errors import InvalidInput, PlatformError
-from smithy.core.files import ENV_FILE_ROOT, FileTool
+from smithcore.core.errors import InvalidInput, PlatformError
+from smithcore.core.files import ENV_FILE_ROOT, FileTool
 
 
 @pytest.fixture()

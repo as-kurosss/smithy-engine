@@ -1,4 +1,4 @@
-"""Tests for smithy.windows.selector and windows tools."""
+"""Tests for smithcore.windows.selector and windows tools."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from smithy.core.errors import ElementNotFound, InvalidInput, PlatformError
-from smithy.windows.selector import _CONTROL_TYPE_MAP, ElementSelector, parse_control_type
+from smithcore.core.errors import ElementNotFound, InvalidInput, PlatformError
+from smithcore.windows.selector import _CONTROL_TYPE_MAP, ElementSelector, parse_control_type
 
 
 class TestElementSelector:
@@ -142,7 +142,7 @@ class TestParseControlType:
 class TestProcessTool:
     @pytest.mark.asyncio
     async def test_tool_metadata(self) -> None:
-        from smithy.windows.tools.process import ProcessTool
+        from smithcore.windows.tools.process import ProcessTool
 
         tool = ProcessTool()
         assert tool.name == "windows.process"
@@ -150,7 +150,7 @@ class TestProcessTool:
 
     @pytest.mark.asyncio
     async def test_unknown_action(self) -> None:
-        from smithy.windows.tools.process import ProcessTool
+        from smithcore.windows.tools.process import ProcessTool
 
         tool = ProcessTool()
         with pytest.raises(InvalidInput, match="Unknown"):
@@ -158,7 +158,7 @@ class TestProcessTool:
 
     @pytest.mark.asyncio
     async def test_start_missing_command(self) -> None:
-        from smithy.windows.tools.process import ProcessTool
+        from smithcore.windows.tools.process import ProcessTool
 
         tool = ProcessTool()
         with pytest.raises(InvalidInput, match="command"):
@@ -166,7 +166,7 @@ class TestProcessTool:
 
     @pytest.mark.asyncio
     async def test_start_disallowed_command(self) -> None:
-        from smithy.windows.tools.process import ProcessTool
+        from smithcore.windows.tools.process import ProcessTool
 
         tool = ProcessTool()
         with pytest.raises(InvalidInput, match="not in the allowed list"):
@@ -174,7 +174,7 @@ class TestProcessTool:
 
     @pytest.mark.asyncio
     async def test_stop_missing_pid_and_name(self) -> None:
-        from smithy.windows.tools.process import ProcessTool
+        from smithcore.windows.tools.process import ProcessTool
 
         tool = ProcessTool()
         with pytest.raises(InvalidInput, match="pid.*name"):
@@ -183,7 +183,7 @@ class TestProcessTool:
 
 class TestClickTool:
     def test_tool_metadata(self) -> None:
-        from smithy.windows.tools.click import ClickTool
+        from smithcore.windows.tools.click import ClickTool
 
         tool = ClickTool()
         assert tool.name == "windows.click"
@@ -191,7 +191,7 @@ class TestClickTool:
 
     @pytest.mark.asyncio
     async def test_click_no_element_key_no_selector(self) -> None:
-        from smithy.windows.tools.click import ClickTool
+        from smithcore.windows.tools.click import ClickTool
 
         tool = ClickTool()
         # Mock uiautomation to prevent real UIA calls

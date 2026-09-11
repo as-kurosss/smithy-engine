@@ -1,17 +1,17 @@
 """Basic RPA bot example — launch Notepad and interact with it.
 
-Requires: pip install smithy[windows]
+Requires: pip install smithcore[windows]
 """
 
 import asyncio
 
-from smithy import Smithy
-from smithy.windows.tools.click import ClickTool
-from smithy.windows.tools.delay import DelayTool
-from smithy.windows.tools.process import ProcessTool
-from smithy.windows.tools.wait import WaitTool
+from smithcore import Smithcore
+from smithcore.windows.tools.click import ClickTool
+from smithcore.windows.tools.delay import DelayTool
+from smithcore.windows.tools.process import ProcessTool
+from smithcore.windows.tools.wait import WaitTool
 
-bot = Smithy(tools=[ProcessTool(), ClickTool(), WaitTool(), DelayTool()])
+bot = Smithcore(tools=[ProcessTool(), ClickTool(), WaitTool(), DelayTool()])
 
 
 async def main() -> None:

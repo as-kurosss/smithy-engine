@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "smithy-engine"
+name = "smithcore-engine"
 version = "0.8.11"
 description = "Free Python RPA engine — create automation bots with simple API"
 readme = "README.md"
@@ -28,13 +28,13 @@ classifiers = [
 dependencies = []
 
 [project.scripts]
-smithy-run-flow = "smithy.run_flow:main"
-smithy-pack = "smithy.pack:_main"
+smithcore-run-flow = "smithcore.run_flow:main"
+smithcore-pack = "smithcore.pack:_main"
 
 [project.urls]
-Homepage = "https://github.com/as-kurosss/smithy-engine"
-Repository = "https://github.com/as-kurosss/smithy-engine"
-Changelog = "https://github.com/as-kurosss/smithy-engine/blob/master/CHANGELOG.md"
+Homepage = "https://github.com/as-kurosss/smithcore-engine"
+Repository = "https://github.com/as-kurosss/smithcore-engine"
+Changelog = "https://github.com/as-kurosss/smithcore-engine/blob/master/CHANGELOG.md"
 
 [project.optional-dependencies]
 windows = ["uiautomation>=2.0.29", "mss>=9", "Pillow>=10", "pyperclip>=1.8"]
@@ -61,7 +61,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/smithy"]
+packages = ["src/smithcore"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -69,7 +69,7 @@ asyncio_mode = "auto"
 
 [tool.coverage.run]
 branch = true
-source = ["smithy"]
+source = ["smithcore"]
 
 [tool.coverage.report]
 exclude_lines = [
@@ -87,9 +87,9 @@ select = ["E", "F", "I", "N", "UP", "B", "A", "SIM", "TCH"]
 ignore = ["TC001", "TC003"]
 
 [tool.ruff.lint.per-file-ignores]
-"src/smithy/core/errors.py" = ["N818"]
-"src/smithy/windows/tools/screenshot.py" = ["A002"]
-"src/smithy/windows/tools/selector_capture/api.py" = ["N818"]
+"src/smithcore/core/errors.py" = ["N818"]
+"src/smithcore/windows/tools/screenshot.py" = ["A002"]
+"src/smithcore/windows/tools/selector_capture/api.py" = ["N818"]
 "tests/windows/test_process_lifecycle.py" = ["N802"]
 
 [tool.mypy]

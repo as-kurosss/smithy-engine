@@ -7,13 +7,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from smithy.core.errors import ElementNotFound, InvalidInput
-from smithy.core.tool import tool
-from smithy.windows.selector import ElementSelector
-from smithy.windows.tools._resolve import build_selector, resolve_element
-from smithy.windows.tools.screenshot import _pil_format
-from smithy.windows.tools.selector_capture.cli import main
-from smithy.windows.tools.selector_capture.generate import build_wait_config
+from smithcore.core.errors import ElementNotFound, InvalidInput
+from smithcore.core.tool import tool
+from smithcore.windows.selector import ElementSelector
+from smithcore.windows.tools._resolve import build_selector, resolve_element
+from smithcore.windows.tools.screenshot import _pil_format
+from smithcore.windows.tools.selector_capture.cli import main
+from smithcore.windows.tools.selector_capture.generate import build_wait_config
 
 
 def _ctrl(*, name: str = "OK", pid: int = 42) -> MagicMock:
@@ -50,7 +50,7 @@ class TestElementKeyContract:
             await resolve_element({"element_key": "my_elem"})
 
     def test_click_schema_has_no_element_key(self) -> None:
-        from smithy.windows.tools.click import ClickTool
+        from smithcore.windows.tools.click import ClickTool
 
         assert "element_key" not in ClickTool().schema()["properties"]
 
@@ -62,14 +62,14 @@ class TestElementKeyContract:
 class TestWaitTool:
     @pytest.mark.asyncio
     async def test_returns_true_when_found(self) -> None:
-        from smithy.windows.tools.wait import WaitTool
+        from smithcore.windows.tools.wait import WaitTool
 
         with patch.object(ElementSelector, "find_from_desktop", return_value=MagicMock()):
             assert await WaitTool().execute({"timeout_ms": 1000, "name": "x"}) is True
 
     @pytest.mark.asyncio
     async def test_returns_false_when_missing(self) -> None:
-        from smithy.windows.tools.wait import WaitTool
+        from smithcore.windows.tools.wait import WaitTool
 
         with patch.object(
             ElementSelector,
@@ -81,7 +81,7 @@ class TestWaitTool:
 
     @pytest.mark.asyncio
     async def test_rejects_non_integer_timeout(self) -> None:
-        from smithy.windows.tools.wait import WaitTool
+        from smithcore.windows.tools.wait import WaitTool
 
         with pytest.raises(InvalidInput):
             await WaitTool().execute({"timeout_ms": "soon"})
@@ -90,46 +90,46 @@ class TestWaitTool:
 class TestToolValidation:
     @pytest.mark.asyncio
     async def test_process_rejects_non_string_action(self) -> None:
-        from smithy.windows.tools.process import ProcessTool
+        from smithcore.windows.tools.process import ProcessTool
 
         with pytest.raises(InvalidInput, match="action"):
             await ProcessTool().execute({"action": 123})
 
     @pytest.mark.asyncio
     async def test_process_stop_rejects_string_pid(self) -> None:
-        from smithy.windows.tools.process import ProcessTool
+        from smithcore.windows.tools.process import ProcessTool
 
         with pytest.raises(InvalidInput, match="pid"):
             await ProcessTool().execute({"action": "stop", "pid": "123"})
 
     @pytest.mark.asyncio
     async def test_delay_rejects_bool(self) -> None:
-        from smithy.windows.tools.delay import DelayTool
+        from smithcore.windows.tools.delay import DelayTool
 
         with pytest.raises(InvalidInput):
             await DelayTool().execute({"duration_ms": True})
 
     @pytest.mark.asyncio
     async def test_input_text_rejects_non_string(self) -> None:
-        from smithy.windows.tools.input_text import InputTextTool
+        from smithcore.windows.tools.input_text import InputTextTool
 
         with pytest.raises(InvalidInput, match="text"):
             await InputTextTool().execute({"text": 123})
 
     @pytest.mark.asyncio
     async def test_set_text_rejects_non_string(self) -> None:
-        from smithy.windows.tools.set_text import SetTextTool
+        from smithcore.windows.tools.set_text import SetTextTool
 
         with pytest.raises(InvalidInput, match="text"):
             await SetTextTool().execute({"text": 123, "name": "x"})
 
     @pytest.mark.asyncio
     async def test_keyboard_maps_unknown_key_to_invalid_input(self) -> None:
-        from smithy.windows.tools.keyboard import KeyboardTool
+        from smithcore.windows.tools.keyboard import KeyboardTool
 
         with (
             patch(
-                "smithy.windows.tools.keyboard._send",
+                "smithcore.windows.tools.keyboard._send",
                 side_effect=ValueError("Unknown key: 'X'"),
             ),
             pytest.raises(InvalidInput, match="Unknown key"),
@@ -139,10 +139,10 @@ class TestToolValidation:
 
 class TestCliDispatch:
     def test_single_dispatches_with_tool_defaults(self, tmp_path: Any) -> None:
-        from smithy.windows.tools.selector_capture.generate import ToolType
+        from smithcore.windows.tools.selector_capture.generate import ToolType
 
         out = str(tmp_path / "sel.json")
-        with patch("smithy.windows.tools.selector_capture.cli.run_single_mode") as run:
+        with patch("smithcore.windows.tools.selector_capture.cli.run_single_mode") as run:
             main(["single", "-o", out])
         run.assert_called_once_with(
             output=out,
@@ -155,20 +155,20 @@ class TestCliDispatch:
 
     def test_series_dispatches_without_tool_arg(self, tmp_path: Any) -> None:
         out = str(tmp_path / "rec.json")
-        with patch("smithy.windows.tools.selector_capture.cli.run_series_mode") as run:
+        with patch("smithcore.windows.tools.selector_capture.cli.run_series_mode") as run:
             main(["series", "-o", out])
         run.assert_called_once_with(output=out)
 
     def test_record_dispatches_without_tool_arg(self, tmp_path: Any) -> None:
         out = str(tmp_path / "flow.json")
-        with patch("smithy.windows.tools.selector_capture.cli.run_record_mode") as run:
+        with patch("smithcore.windows.tools.selector_capture.cli.run_record_mode") as run:
             main(["record", "-o", out])
         run.assert_called_once_with(output=out)
 
 
 class TestWaitConfigGeneration:
     def test_build_wait_config_matches_tool_schema(self) -> None:
-        from smithy.windows.tools.wait import WaitTool
+        from smithcore.windows.tools.wait import WaitTool
 
         cfg = build_wait_config(2000)
         assert cfg == {"timeout_ms": 2000}

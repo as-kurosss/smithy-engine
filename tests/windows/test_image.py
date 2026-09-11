@@ -1,4 +1,4 @@
-"""Tests for smithy.windows.tools.image — find/click image fallback."""
+"""Tests for smithcore.windows.tools.image — find/click image fallback."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from typing import Any
 
 import pytest
 
-from smithy.core.errors import ElementNotFound, InvalidInput
-from smithy.windows.tools.image import ClickImageTool, FindImageTool, _find_on_screen
+from smithcore.core.errors import ElementNotFound, InvalidInput
+from smithcore.windows.tools.image import ClickImageTool, FindImageTool, _find_on_screen
 
 
 class TestValidation:
@@ -47,7 +47,7 @@ class TestFindImage:
         template = tmp_path / "t.png"
         template.write_bytes(b"png")
         monkeypatch.setattr(
-            "smithy.windows.tools.image._find_on_screen",
+            "smithcore.windows.tools.image._find_on_screen",
             lambda *args: (True, (150, 250), 0.93),
         )
         result = await FindImageTool().execute({"template": str(template)})
@@ -58,7 +58,7 @@ class TestFindImage:
         template = tmp_path / "t.png"
         template.write_bytes(b"png")
         monkeypatch.setattr(
-            "smithy.windows.tools.image._find_on_screen",
+            "smithcore.windows.tools.image._find_on_screen",
             lambda *args: (False, (0, 0), 0.42),
         )
         with pytest.raises(ElementNotFound, match="not found on screen"):
@@ -69,12 +69,12 @@ class TestFindImage:
         template = tmp_path / "t.png"
         template.write_bytes(b"png")
         monkeypatch.setattr(
-            "smithy.windows.tools.image._find_on_screen",
+            "smithcore.windows.tools.image._find_on_screen",
             lambda *args: (True, (60, 80), 0.9),
         )
         clicks: list[tuple[Any, ...]] = []
 
-        import smithy.windows.tools.click as click_module
+        import smithcore.windows.tools.click as click_module
 
         def fake_click_at(x: int, y: int, button: str, count: int) -> None:
             clicks.append((x, y, button, count))
@@ -88,7 +88,7 @@ class TestFindImage:
 
     @pytest.mark.asyncio
     async def test_sandbox_escape(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("SMITHY_FILE_ROOT", str(tmp_path / "root"))
+        monkeypatch.setenv("SMITHCORE_FILE_ROOT", str(tmp_path / "root"))
         (tmp_path / "root").mkdir()
         outside = tmp_path / "elsewhere.png"
         outside.write_bytes(b"png")

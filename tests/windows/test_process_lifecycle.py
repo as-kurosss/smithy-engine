@@ -7,8 +7,8 @@ from typing import Any
 
 import pytest
 
-from smithy.core.errors import InvalidInput, PlatformError
-from smithy.windows.tools.process import ProcessTool
+from smithcore.core.errors import InvalidInput, PlatformError
+from smithcore.windows.tools.process import ProcessTool
 
 _STILL_ACTIVE = 259
 
@@ -130,9 +130,9 @@ class TestProcessStopDecoding:
 
             return _Done()
 
-        monkeypatch.setattr("smithy.windows.tools.process.subprocess.run", fake_run)
+        monkeypatch.setattr("smithcore.windows.tools.process.subprocess.run", fake_run)
         monkeypatch.setattr(
-            "smithy.windows.tools.process._query_image_name", lambda pid: "notepad.exe"
+            "smithcore.windows.tools.process._query_image_name", lambda pid: "notepad.exe"
         )
         await ProcessTool().execute({"action": "stop", "pid": 4242})
         assert calls[0].get("errors") == "replace"
@@ -151,7 +151,7 @@ class TestProcessStopDecoding:
 
             return _Done()
 
-        monkeypatch.setattr("smithy.windows.tools.process.subprocess.run", fake_run)
+        monkeypatch.setattr("smithcore.windows.tools.process.subprocess.run", fake_run)
         await ProcessTool().execute({"action": "stop", "name": "notepad.exe"})
         assert calls[0].get("errors") == "replace"
         assert calls[0].get("encoding") == "utf-8"

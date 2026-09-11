@@ -29,9 +29,9 @@ for it and instantiate the pack per client:
 
 ```json
 {
-  "schema": "smithy-template-v1",
+  "schema": "smithcore-template-v1",
   "title": "Notepad demo",
-  "params": [{ "name": "text", "type": "string", "default": "Hello from Smithy!" }]
+  "params": [{ "name": "text", "type": "string", "default": "Hello from Smithcore!" }]
 }
 ```
 
@@ -44,19 +44,19 @@ binds to a client secret at instantiation time).
 
 ```powershell
 # from the repo root, in a venv with the windows extras:
-smithy-run-flow --pack examples\packs\notepad --stage process --set text="Hello from Smithy!"
+smithcore-run-flow --pack examples\packs\notepad --stage process --set text="Hello from Smithcore!"
 # or validate without executing:
-smithy-run-flow examples\packs\notepad\flow.json --validate
+smithcore-run-flow examples\packs\notepad\flow.json --validate
 ```
 
 Notepad must be on the process allowlist — `notepad.exe` is in the built-in
-demo list, or set `SMITHY_ALLOWED_COMMANDS=notepad.exe,...`.
+demo list, or set `SMITHCORE_ALLOWED_COMMANDS=notepad.exe,...`.
 
-## Publish it to smithy-cloud
+## Publish it to smithcore-cloud
 
 ```powershell
-$env:SMITHY_API_TOKEN = "sct_..."
-smithy-pack push examples\packs\notepad --name notepad-demo --version 1.0.0 `
+$env:SMITHCORE_API_TOKEN = "sct_..."
+smithcore-pack push examples\packs\notepad --name notepad-demo --version 1.0.0 `
     --api-url http://your-orchestrator:8000/api
 ```
 

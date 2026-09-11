@@ -1,11 +1,11 @@
 """Custom tool example — create tools from simple functions.
 
-Requires: pip install smithy
+Requires: pip install smithcore
 """
 
 import asyncio
 
-from smithy import Smithy, tool
+from smithcore import Smithcore, tool
 
 
 @tool("greet", description="Greet a person by name")
@@ -21,7 +21,7 @@ async def add(config: dict) -> dict:
     return {"result": a + b}
 
 
-bot = Smithy(tools=[greet, add])
+bot = Smithcore(tools=[greet, add])
 
 
 async def main() -> None:

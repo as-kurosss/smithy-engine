@@ -15,16 +15,16 @@
 ### Added
 
 - **Asset tools** `asset.get` (a text asset) and `asset.credential` (a
-  credential's fields). They read the injected `SMITHY_ASSET_*` env at run
+  credential's fields). They read the injected `SMITHCORE_ASSET_*` env at run
   time; their values are registered as secrets, so the runner redacts them
   from logs/errors and excludes the variables they land in from the
   run-result snapshot sent back to the orchestrator.
 - **On-demand asset resolution by id/GUID or name.** When the agent sets
-  `SMITHY_ORCHESTRATOR_URL` + `SMITHY_AGENT_ID` + a token, the engine uses
+  `SMITHCORE_ORCHESTRATOR_URL` + `SMITHCORE_AGENT_ID` + a token, the engine uses
   `HttpAssetProvider` and fetches a single asset (`name`, `name.field` or a
   GUID) from `GET /api/agents/{id}/assets/{ref}` instead of the whole vault
   being injected into the environment; otherwise `EnvAssetProvider` is used.
-- **Asset fetches are process-scoped.** When `SMITHY_PROCESS_ID` is set (the
+- **Asset fetches are process-scoped.** When `SMITHCORE_PROCESS_ID` is set (the
   agent does it for each run), `HttpAssetProvider` passes it along and the
   orchestrator returns only the assets that process is allowed to read.
 - **Typed flow variables** — a flow document's `variables` may be a list of
@@ -76,7 +76,7 @@ Template packs: a pack can advertise itself as a reusable blueprint.
   `params[]` of `string/number/integer/bool/file/folder/asset/choice`).
   `build_pack` validates it and embeds a compact summary under the
   manifest's `template` key, so a catalog can list templates without
-  unzipping. Exposed as `smithy.load_template` / `smithy.validate_template`.
+  unzipping. Exposed as `smithcore.load_template` / `smithcore.validate_template`.
 - **`flow.json` is the preferred main flow name.** When a pack has no
   staged `init/process/end.flow.json`, a single `flow.json` is used as the
   `process` stage — so the entry file reads naturally while the stage
@@ -91,7 +91,7 @@ Record → flow: turn a live desktop session into a runnable flow document.
 - **`record_series(stop, on_step=None)`** — a programmatic series recorder
   driven by a `threading.Event` instead of the Ctrl+Shift+F2 hotkey, so a
   server (the designer) can start/stop it over HTTP. Exported from
-  `smithy.windows.tools.selector_capture`.
+  `smithcore.windows.tools.selector_capture`.
 - **Typed text is captured.** The series listener now carries the typed
   character (`SeriesEvent.char`); printable keys are buffered and flushed
   into a `windows.input_text` node (with the element selector) on the next
@@ -109,7 +109,7 @@ and the Windows tools.
 
 ### Security
 
-- **`SMITHY_ASSET_*` no longer leaks into the robot config.** The env
+- **`SMITHCORE_ASSET_*` no longer leaks into the robot config.** The env
   overlay now excludes the asset namespace and framework settings, so
   `Config.to_dict()` / `repr(config)` can never expose secrets.
 - **`file list` can no longer escape the sandbox.** Glob patterns
@@ -205,14 +205,14 @@ and the Windows tools.
 - `InMemoryQueue` resets expired leases via a lease heap instead of an
   O(n) scan per claim.
 - `screenshot` reuses `core.files.confine_path` instead of duplicating it.
-- `smithy.__version__` is read from package metadata, so it can no longer
+- `smithcore.__version__` is read from package metadata, so it can no longer
   drift from `pyproject.toml`.
 - CI: added a coverage gate (>= 70%) and an advisory `pip-audit` job.
 
 ### Fixed
 
-- **Packs are flow-only: `smithy.pack build` never ships `main.py`.** The
-  agent runs the flow itself (`smithy.run_flow`), so the legacy runner
+- **Packs are flow-only: `smithcore.pack build` never ships `main.py`.** The
+  agent runs the flow itself (`smithcore.run_flow`), so the legacy runner
   shim no longer lands in the archive or the orchestrator.
 - **`windows.process` stop no longer crashes on localized `taskkill`
   output.** Deployed processes run with `PYTHONUTF8=1`, so strict UTF-8
@@ -224,10 +224,10 @@ and the Windows tools.
 
 ### Added
 
-- **`smithy.pack push` — dev → orchestrator in one step:** build + verify
-  + zip + upload to smithy-cloud (`POST /packs/{name}/versions/{version}`)
-  in a single command. `--api-url` defaults to `$SMITHY_API_URL`, the
-  operator token comes from `$SMITHY_API_TOKEN` (override with
+- **`smithcore.pack push` — dev → orchestrator in one step:** build + verify
+  + zip + upload to smithcore-cloud (`POST /packs/{name}/versions/{version}`)
+  in a single command. `--api-url` defaults to `$SMITHCORE_API_URL`, the
+  operator token comes from `$SMITHCORE_API_TOKEN` (override with
   `--token-env`); plain http is accepted only for loopback hosts unless
   `--insecure` is passed (same policy as `HttpQueue`). Transient server
   errors (502/503/504) are retried with backoff; 409 surfaces as "bump
@@ -238,7 +238,7 @@ and the Windows tools.
 
 ### Fixed
 
-- **`smithy.pack build` no longer checksums machine-local junk:** running
+- **`smithcore.pack build` no longer checksums machine-local junk:** running
   it on a project root that contains a virtualenv (`.venv/`), `.git/`,
   IDE directories or tool caches listed every one of those files in the
   manifest. Environments, VCS and caches are now ignored alongside the
@@ -277,7 +277,7 @@ and the Windows tools.
   per-thread, and `capture_at_point` imports `uiautomation` eagerly (so
   COM was initialized on the main thread only). Interactive capture now
   initializes/uninitializes COM around the UIA walk, so keyed dev
-  capture (`bot.click(key=...)` + `SMITHY_DEV_CAPTURE=1`) works from
+  capture (`bot.click(key=...)` + `SMITHCORE_DEV_CAPTURE=1`) works from
   async bot code.
 
 ## 0.8.0 — 2026-09-09
@@ -286,12 +286,12 @@ Dev → delivery pipeline: packs, tracer, transactional runs, flow hardening.
 
 ### Added
 
-- **`smithy.pack`** — pack = directory + generated `pack.json` manifest
-  (schema `smithy-pack-v1`) with a SHA-256 per file. Machine-local
+- **`smithcore.pack`** — pack = directory + generated `pack.json` manifest
+  (schema `smithcore-pack-v1`) with a SHA-256 per file. Machine-local
   files (`robot.toml`, queues, logs, caches) are deliberately not
   checksummed; the manifest carries the stage → flow entry map
   (init/process/end) and is signature-ready for future signing.
-- **CLI**: `python -m smithy.pack build DIR --name N --version V`
+- **CLI**: `python -m smithcore.pack build DIR --name N --version V`
   (entries default to the init/process/end conventions, or pass
   `--entry STAGE=FILE`), `verify DIR`, `zip DIR [--out FILE]` (refuses
   to zip an unverified pack) and `fetch SOURCE --dest DIR` — download a
@@ -305,7 +305,7 @@ Dev → delivery pipeline: packs, tracer, transactional runs, flow hardening.
   `selectors.json` are picked up from the pack automatically.
   A tampered file (any listed file modified, missing, or
   unchecksummed entry) makes the runner refuse to start (exit 1).
-- **Flow tracer** — `Smithy(trace="bot.flow.json")`: every successful
+- **Flow tracer** — `Smithcore(trace="bot.flow.json")`: every successful
   tool call is recorded as a v2 `tool` node; keyed calls are traced as
   `key` (portable selectors), resolved fields are stripped; failed calls
   are not steps. The document is rewritten after every call (crash-safe).
@@ -322,7 +322,7 @@ Dev → delivery pipeline: packs, tracer, transactional runs, flow hardening.
   per item, the final variable snapshot is stored as the item result.
   Queue backend: `--db q.db` (local SQLite — full transactional
   resilience without any server) or `--cloud URL --agent ID` with the
-  token from `SMITHY_CLOUD_TOKEN` (`--insecure` allows plain HTTP).
+  token from `SMITHCORE_CLOUD_TOKEN` (`--insecure` allows plain HTTP).
   Summary line: processed/ok/business/system + stop reason.
 - **Node `on_error` policies** (tool and flow nodes): `stop` (default —
   fail the run), `continue` (save `ExceptionType: message` into
@@ -330,14 +330,14 @@ Dev → delivery pipeline: packs, tracer, transactional runs, flow hardening.
   and `retry` (bounded `retries` with `delay_ms`). `asyncio`
   cancellation always aborts, even under `continue`.
 - **`key` in tool configs** — selector resolution through the
-  `SelectorStore` (env `SMITHY_SELECTOR_STORE`, default
+  `SelectorStore` (env `SMITHCORE_SELECTOR_STORE`, default
   `selectors.json`). The dev-capture workflow works in flows:
-  with `SMITHY_DEV_CAPTURE=1` (or `run_flow --capture`) a missing key
+  with `SMITHCORE_DEV_CAPTURE=1` (or `run_flow --capture`) a missing key
   is recorded interactively and a stale one (`ElementNotFound`) is
   re-captured and retried; in production both fail honestly.
 - **`${asset:name}` interpolation** in tool configs, `set` values and
   conditions — runtime secrets via an `AssetProvider` (default
-  `SMITHY_ASSET_*` env). Resolved asset values are redacted from the
+  `SMITHCORE_ASSET_*` env). Resolved asset values are redacted from the
   runner's log output.
 - **`flow` nodes** (subflows): run a nested document from `config.doc`
   (inline) or `config.path` (file), sharing the variable scope;
@@ -350,7 +350,7 @@ Dev → delivery pipeline: packs, tracer, transactional runs, flow hardening.
   the run cleanly) — a supervising service can now distinguish a crash
   from a requested stop.
 - **`HttpQueue.claim` version stamping** — the claim body carries the
-  engine version and the agent version (`SMITHY_AGENT_VERSION` env);
+  engine version and the agent version (`SMITHCORE_AGENT_VERSION` env);
   both fields are optional and ignored by servers without the feature.
 - Full client-side chain: `fetch → verify → run_flow --pack --stage
   --transactional`. SHA-256 covers integrity (transit + storage);
@@ -371,20 +371,20 @@ executor and the runner CLI.
 
 ### Added
 
-- flow-v2 executor in the engine core (`smithy.flow.FlowRunner`) and a
-  standalone runner CLI: `python -m smithy.run_flow flow.json [--set NAME=VALUE]`
+- flow-v2 executor in the engine core (`smithcore.flow.FlowRunner`) and a
+  standalone runner CLI: `python -m smithcore.run_flow flow.json [--set NAME=VALUE]`
   — flows from the designer now run as plain programs (e.g. inside
-  smithy-cloud process bundles)
-- Programmatic capture API (`smithy[capture]`):
+  smithcore-cloud process bundles)
+- Programmatic capture API (`smithcore[capture]`):
   `capture_once()` / `capture_once_async()` — block the script, hover
   an element, press CTRL (ESC cancels via `CaptureCancelled`), get a
   ranked `CapturedSelector` (selector + full_path + confidence +
   warnings) back into your code.
-- `SelectorStore` (`smithy.core.selectors`) — key → selector registry
+- `SelectorStore` (`smithcore.core.selectors`) — key → selector registry
   persisted as JSON (atomic writes, survives corrupt files).
 - Facade keyed selectors + dev capture:
-  `Smithy(selector_store=..., dev_capture=True)` (or env
-  `SMITHY_DEV_CAPTURE=1`) and `key=` on `click`, `wait`, `input_text`,
+  `Smithcore(selector_store=..., dev_capture=True)` (or env
+  `SMITHCORE_DEV_CAPTURE=1`) and `key=` on `click`, `wait`, `input_text`,
   `set_text`, `get_element`, `hover`, `exists`, `get_text`,
   `highlight`, `get_table`, `control_action`.
   Workflow: a stored key runs silently (no re-prompting); a missing key
@@ -393,7 +393,7 @@ executor and the runner CLI.
   missing key is a hard error and a stale selector fails honestly.
 
   ```python
-  bot = Smithy(tools=windows_tools(), dev_capture=True)
+  bot = Smithcore(tools=windows_tools(), dev_capture=True)
   await bot.click(key="login.submit")   # first run: capture; then: silent
   ```
 
@@ -404,7 +404,7 @@ executor and the runner CLI.
   `toggle`, `expand`, `collapse`, `select`, `focus`) that keep working
   when a window is covered or unfocused (no coordinate clicks).
 - `file` tool — `read`/`write`/`append`/`copy`/`move`/`delete`/
-  `exists`/`wait_for`/`list`; optional `SMITHY_FILE_ROOT` sandbox
+  `exists`/`wait_for`/`list`; optional `SMITHCORE_FILE_ROOT` sandbox
   confines every path (flow configs then cannot touch anything outside).
 - `excel` tool — `read`/`write`/`append` for xlsx via `openpyxl`
   (new ``excel`` extra), honors the same file sandbox.
@@ -417,8 +417,8 @@ executor and the runner CLI.
 - `windows.ocr` — text from an image file or screen region using the
   built-in Windows OCR engine, zero extra dependencies (Windows
   PowerShell 5.1 WinRT interop); optional `language` (BCP-47).
-- Runtime secrets: `smithy.core.assets` (`AssetProvider` protocol +
-  `EnvAssetProvider` over `SMITHY_ASSET_*`), `Smithy(assets=...)` and
+- Runtime secrets: `smithcore.core.assets` (`AssetProvider` protocol +
+  `EnvAssetProvider` over `SMITHCORE_ASSET_*`), `Smithcore(assets=...)` and
   `bot.asset("db.password")`. Values are fetched in bot code and never
   pass through tool configs/results — they cannot leak into the JSONL
   audit log.
@@ -428,7 +428,7 @@ executor and the runner CLI.
 - `HttpQueue(allow_insecure=True)` — plain-HTTP base URLs are rejected
   unless explicitly allowed (loopback is always permitted); retried
   error responses are closed.
-- `SMITHY_OUTPUT_ROOT` sandbox for screenshot paths; screenshots opt
+- `SMITHCORE_OUTPUT_ROOT` sandbox for screenshot paths; screenshots opt
   into per-monitor-v2 DPI awareness (fixes misaligned window captures
   on scaled displays).
 - `JsonlEventLogger` writes on a background thread (the event loop is
@@ -441,8 +441,8 @@ executor and the runner CLI.
   invalid constructor args raise `InvalidInput` (consistent with core).
 - `RetryTool`/registry: registering a tool with an empty `schema()`
   emits a `UserWarning` (validation is silently disabled for it).
-- Config: `SMITHY_BLOCKING_TIMEOUT`/`SMITHY_ALLOWED_COMMANDS`/
-  `SMITHY_OUTPUT_ROOT` no longer leak into the robot config document;
+- Config: `SMITHCORE_BLOCKING_TIMEOUT`/`SMITHCORE_ALLOWED_COMMANDS`/
+  `SMITHCORE_OUTPUT_ROOT` no longer leak into the robot config document;
   `Config.__getattr__` no longer risks infinite recursion during
   unpickling.
 
@@ -499,7 +499,7 @@ Playwright-style codegen: recorded flows render as runnable bot scripts.
 
 - Code generation (`windows/tools/selector_capture/emit.py`): any
   capture file (`single`/`series`/`record` — same `nodes` shape)
-  renders as a `Smithy(tools=windows_tools())` script with one
+  renders as a `Smithcore(tools=windows_tools())` script with one
   `await bot.*` call per node. New `emit` CLI subcommand
   (`emit -i flow.json -o bot.py [--clip]`) plus `--emit BOT.py` on
   every record mode for one-pass record-to-code.
@@ -575,7 +575,7 @@ GUI batch: comfortable desktop automation on top of the 0.2.0 core.
   `pyperclip`), `windows.list_elements` (direct-children dump for
   discovering automation IDs), `windows.highlight` (colored rectangle
   flash for debugging selectors).
-- `Smithy` facade methods for every new tool (`scroll`, `hover`,
+- `Smithcore` facade methods for every new tool (`scroll`, `hover`,
   `exists`, `get_text`, `window`, `select`, `drag`, `clipboard`,
   `list_elements`, `highlight`), all accepting an optional `handle` for
   PID scoping.
@@ -589,7 +589,7 @@ GUI batch: comfortable desktop automation on top of the 0.2.0 core.
   calls; no module-level `DoubleClick` exists in `uiautomation`).
 - `windows.wait` now takes `wait_for` (`appear`/`disappear`) with a
   symmetric poll loop; `PlatformError` mid-poll counts as still present.
-- `smithy[windows]` extra now includes `pyperclip` (clipboard support).
+- `smithcore[windows]` extra now includes `pyperclip` (clipboard support).
 
 ## 0.2.0
 
@@ -608,7 +608,7 @@ First minor release: transactions, config, and hardening on top of the
   (capped at 30 min), `on_progress` hook, `TransactionReport`.
 - TOML robot config (`core/config.py`): `load_config` with fail-fast
   validation (`required` / `must_exist`), frozen attribute-style `Config`,
-  `SMITHY_*` env overlay (`__` nests, TOML-typed values).
+  `SMITHCORE_*` env overlay (`__` nests, TOML-typed values).
 - Schema validation (`core/schema.py`): `ToolRegistry.execute` validates
   configs against `schema()` (hand-rolled subset, no new deps).
 - Tool-level retries (`core/retry.py`): `RetryTool` wrapper
@@ -618,7 +618,7 @@ First minor release: transactions, config, and hardening on top of the
 - `windows_tools()` factory (`windows/tools/__init__.py`): default tool
   set in one call, UIA imports stay lazy.
 - `ProcessTool` allowlist is now configurable: constructor param,
-  `SMITHY_ALLOWED_COMMANDS` env override, `allowed_commands` introspection.
+  `SMITHCORE_ALLOWED_COMMANDS` env override, `allowed_commands` introspection.
 - `parse_control_type()` is public (`windows/selector.py`).
 - Examples: `reframework_bot.py` (dispatcher + performer skeleton),
   `config_demo.py` with good/broken TOMLs.
@@ -632,4 +632,4 @@ First minor release: transactions, config, and hardening on top of the
 
 - Windows UI tools (process, click, wait, delay, screenshot, input_text,
   keyboard, set_text, get_element), selector capture CLI, middleware
-  event bus, `@tool` decorator, `Smithy` facade.
+  event bus, `@tool` decorator, `Smithcore` facade.

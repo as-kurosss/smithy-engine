@@ -1,4 +1,4 @@
-"""Tests for smithy.core.tool and smithy.core.registry."""
+"""Tests for smithcore.core.tool and smithcore.core.registry."""
 
 from __future__ import annotations
 
@@ -6,9 +6,9 @@ from typing import Any
 
 import pytest
 
-from smithy.core.errors import InvalidInput
-from smithy.core.registry import ToolRegistry
-from smithy.core.tool import AbstractTool, Tool
+from smithcore.core.errors import InvalidInput
+from smithcore.core.registry import ToolRegistry
+from smithcore.core.tool import AbstractTool, Tool
 
 # --- Stubs ---
 

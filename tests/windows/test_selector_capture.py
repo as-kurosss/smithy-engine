@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from smithy.windows.tools.selector_capture.capture import (
+from smithcore.windows.tools.selector_capture.capture import (
     BestSelector,
     CaptureRecord,
     PathNode,
@@ -18,7 +18,7 @@ from smithy.windows.tools.selector_capture.capture import (
     path_to_dicts,
     read_node,
 )
-from smithy.windows.tools.selector_capture.generate import (
+from smithcore.windows.tools.selector_capture.generate import (
     FlowNode,
     GenerateParams,
     ToolType,
@@ -544,7 +544,7 @@ class TestBestSelectorFromPath:
     """Tests for :func:`best_selector_from_path` extraction logic."""
 
     def test_extracts_last_node(self) -> None:
-        from smithy.windows.tools.selector_capture.capture import (
+        from smithcore.windows.tools.selector_capture.capture import (
             best_selector_from_path,
         )
 
@@ -563,7 +563,7 @@ class TestBestSelectorFromPath:
         assert sel.automation_id == "btnOk"
 
     def test_empty_path_raises(self) -> None:
-        from smithy.windows.tools.selector_capture.capture import (
+        from smithcore.windows.tools.selector_capture.capture import (
             best_selector_from_path,
         )
 
@@ -609,7 +609,7 @@ class TestCaptureAtPoint:
         mock_auto.GetRootControl.return_value = mock_root
 
         with patch(
-            "smithy.windows.tools.selector_capture.capture.auto",
+            "smithcore.windows.tools.selector_capture.capture.auto",
             mock_auto,
         ):
             path, selector = capture_at_point(200, 300)
@@ -632,7 +632,7 @@ class TestCaptureAtPoint:
 
         with (
             patch(
-                "smithy.windows.tools.selector_capture.capture.auto",
+                "smithcore.windows.tools.selector_capture.capture.auto",
                 mock_auto,
             ),
             pytest.raises(RuntimeError, match="root"),
@@ -653,7 +653,7 @@ class TestCaptureAtPoint:
         mock_auto.GetRootControl.return_value = mock_root
 
         with patch(
-            "smithy.windows.tools.selector_capture.capture.auto",
+            "smithcore.windows.tools.selector_capture.capture.auto",
             mock_auto,
         ):
             path, selector = capture_at_point(0, 0)
@@ -684,8 +684,8 @@ class TestNodesForCapture:
     """Tests for :func:`_nodes_for_capture` — one capture, one node shape."""
 
     def test_ranked_config_used_with_full_path(self) -> None:
-        from smithy.windows.selector_rank import RankedSelector
-        from smithy.windows.tools.selector_capture.recorder import (
+        from smithcore.windows.selector_rank import RankedSelector
+        from smithcore.windows.tools.selector_capture.recorder import (
             _nodes_for_capture,
         )
 
@@ -710,7 +710,7 @@ class TestNodesForCapture:
         assert nodes[0].full_path == [{"control_type": "Window", "name": "Main"}]
 
     def test_fallback_unranked_translates_numeric_type(self) -> None:
-        from smithy.windows.tools.selector_capture.recorder import (
+        from smithcore.windows.tools.selector_capture.recorder import (
             _nodes_for_capture,
         )
 
@@ -725,8 +725,8 @@ class TestNodesForCapture:
         assert nodes[0].full_path == [{"control_type": "Window"}]
 
     def test_empty_path_gives_empty_full_path(self) -> None:
-        from smithy.windows.selector_rank import RankedSelector
-        from smithy.windows.tools.selector_capture.recorder import (
+        from smithcore.windows.selector_rank import RankedSelector
+        from smithcore.windows.tools.selector_capture.recorder import (
             _nodes_for_capture,
         )
 
@@ -752,7 +752,7 @@ class TestSeriesInputFlush:
     """Tests for :func:`_input_text_nodes` — keyboard flushes keep full_path."""
 
     def test_input_nodes_keep_full_path(self) -> None:
-        from smithy.windows.tools.selector_capture.recorder import (
+        from smithcore.windows.tools.selector_capture.recorder import (
             _input_text_nodes,
         )
 

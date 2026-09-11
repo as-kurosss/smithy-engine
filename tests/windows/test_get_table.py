@@ -1,4 +1,4 @@
-"""Tests for smithy.windows.tools.get_table and control_action."""
+"""Tests for smithcore.windows.tools.get_table and control_action."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from smithy.core.errors import ElementNotFound, InvalidInput, PlatformError
-from smithy.windows.tools.control_action import ControlActionTool
-from smithy.windows.tools.get_table import GetTableTool
+from smithcore.core.errors import ElementNotFound, InvalidInput, PlatformError
+from smithcore.windows.tools.control_action import ControlActionTool
+from smithcore.windows.tools.get_table import GetTableTool
 
 
 def _ctrl(**attrs: Any) -> MagicMock:
@@ -52,7 +52,7 @@ class TestGetTable:
     async def test_extracts_header_and_rows(self) -> None:
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
-                "smithy.windows.tools.get_table.resolve_element",
+                "smithcore.windows.tools.get_table.resolve_element",
                 _fake_resolve(_table_element()),
             )
             result = await GetTableTool().execute({"automation_id": "grid"})
@@ -67,7 +67,7 @@ class TestGetTable:
         wrapper.GetFirstChildControl.return_value = inner
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
-                "smithy.windows.tools.get_table.resolve_element",
+                "smithcore.windows.tools.get_table.resolve_element",
                 _fake_resolve(wrapper),
             )
             result = await GetTableTool().execute({"name": "dlg"})
@@ -79,7 +79,7 @@ class TestGetTable:
         empty.GetFirstChildControl.return_value = None
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
-                "smithy.windows.tools.get_table.resolve_element",
+                "smithcore.windows.tools.get_table.resolve_element",
                 _fake_resolve(empty),
             )
             with pytest.raises(PlatformError, match="No rows found"):
@@ -94,7 +94,7 @@ class TestGetTable:
     async def test_missing_selector(self) -> None:
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
-                "smithy.windows.tools.get_table.resolve_element",
+                "smithcore.windows.tools.get_table.resolve_element",
                 _fake_resolve(None),
             )
             with pytest.raises(ElementNotFound):
@@ -107,7 +107,7 @@ class TestControlAction:
         element = MagicMock()
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
-                "smithy.windows.tools.control_action.resolve_element",
+                "smithcore.windows.tools.control_action.resolve_element",
                 _fake_resolve(element),
             )
             result = await ControlActionTool().execute({"action": "invoke", "name": "OK"})
@@ -121,7 +121,7 @@ class TestControlAction:
         element.GetTogglePattern.return_value.ToggleState = "On"
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
-                "smithy.windows.tools.control_action.resolve_element",
+                "smithcore.windows.tools.control_action.resolve_element",
                 _fake_resolve(element),
             )
             result = await ControlActionTool().execute({"action": "toggle", "name": "cb"})
@@ -133,7 +133,7 @@ class TestControlAction:
         element = MagicMock()
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
-                "smithy.windows.tools.control_action.resolve_element",
+                "smithcore.windows.tools.control_action.resolve_element",
                 _fake_resolve(element),
             )
             result = await ControlActionTool().execute({"action": "focus", "name": "edit"})
@@ -146,7 +146,7 @@ class TestControlAction:
         element.GetInvokePattern.side_effect = Exception("COMError: pattern unsupported")
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
-                "smithy.windows.tools.control_action.resolve_element",
+                "smithcore.windows.tools.control_action.resolve_element",
                 _fake_resolve(element),
             )
             with pytest.raises(PlatformError, match="pattern"):

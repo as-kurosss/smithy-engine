@@ -1,4 +1,4 @@
-"""Tests for smithy.windows.tools.ocr — Windows OCR tool."""
+"""Tests for smithcore.windows.tools.ocr — Windows OCR tool."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from smithy.core.errors import InvalidInput, PlatformError
-from smithy.windows.tools import ocr as ocr_module
-from smithy.windows.tools.ocr import OcrTool
+from smithcore.core.errors import InvalidInput, PlatformError
+from smithcore.windows.tools import ocr as ocr_module
+from smithcore.windows.tools.ocr import OcrTool
 
 
 class TestOcrValidation:
@@ -57,8 +57,8 @@ class TestOcrExecution:
         assert result["text"] == "ИНН 7701234567\nИтого: 1500"
         assert result["chars"] == len(result["text"])
         assert "__PATH__" not in captured["script"]
-        assert captured["env"]["SMITHY_OCR_PATH"] == str(image)
-        assert captured["env"]["SMITHY_OCR_LANG"] == ""
+        assert captured["env"]["SMITHCORE_OCR_PATH"] == str(image)
+        assert captured["env"]["SMITHCORE_OCR_LANG"] == ""
 
     @pytest.mark.asyncio
     async def test_language_forwarded(
@@ -80,7 +80,7 @@ class TestOcrExecution:
 
         monkeypatch.setattr(subprocess, "run", fake_run)
         await OcrTool().execute({"path": str(image), "language": "ru-RU"})
-        assert captured["env"]["SMITHY_OCR_LANG"] == "ru-RU"
+        assert captured["env"]["SMITHCORE_OCR_LANG"] == "ru-RU"
         assert "__LANG__" not in captured["script"]
 
     @pytest.mark.asyncio

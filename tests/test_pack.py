@@ -1,4 +1,4 @@
-"""Tests for smithy.pack — build/verify manifests and run_flow --pack."""
+"""Tests for smithcore.pack — build/verify manifests and run_flow --pack."""
 
 from __future__ import annotations
 
@@ -12,9 +12,9 @@ from typing import Any
 
 import pytest
 
-from smithy import run_flow
-from smithy.core.errors import InvalidInput
-from smithy.pack import (
+from smithcore import run_flow
+from smithcore.core.errors import InvalidInput
+from smithcore.pack import (
     PACK_MANIFEST,
     build_pack,
     fetch_pack,
@@ -49,7 +49,7 @@ class TestBuildVerify:
         build_pack(root, name="1c-invoices", version="1.0.0")
         assert verify_pack(root) == []
         manifest = load_manifest(root)
-        assert manifest["schema"] == "smithy-pack-v1"
+        assert manifest["schema"] == "smithcore-pack-v1"
         assert manifest["name"] == "1c-invoices"
         assert manifest["entry"] == {"process": "process.flow.json"}
         listed = {item["path"] for item in manifest["files"]}
@@ -119,7 +119,7 @@ class TestPackCli:
             [
                 sys.executable,
                 "-m",
-                "smithy.pack",
+                "smithcore.pack",
                 "build",
                 str(root),
                 "--name",
@@ -132,7 +132,7 @@ class TestPackCli:
         )
         assert build.returncode == 0, build.stderr
         verify = subprocess.run(
-            [sys.executable, "-m", "smithy.pack", "verify", str(root)],
+            [sys.executable, "-m", "smithcore.pack", "verify", str(root)],
             capture_output=True,
             text=True,
         )
@@ -179,7 +179,7 @@ class TestDelivery:
         evil = tmp_path / "evil.zip"
         with zipfile.ZipFile(evil, "w") as zf:
             zf.writestr("../escape.json", "{}")
-            zf.writestr(PACK_MANIFEST, json.dumps({"schema": "smithy-pack-v1"}))
+            zf.writestr(PACK_MANIFEST, json.dumps({"schema": "smithcore-pack-v1"}))
         dest = tmp_path / "victim"
         dest.mkdir()
         with pytest.raises(InvalidInput, match="unsafe path"):
@@ -316,7 +316,7 @@ class TestPublish:
             [
                 sys.executable,
                 "-m",
-                "smithy.pack",
+                "smithcore.pack",
                 "push",
                 str(root),
                 "--name",
@@ -328,7 +328,7 @@ class TestPublish:
             text=True,
         )
         assert result.returncode == 1
-        assert "SMITHY_API_URL" in result.stderr
+        assert "SMITHCORE_API_URL" in result.stderr
 
     def test_push_uploads_to_orchestrator(self, tmp_path: Path) -> None:
         import os
@@ -336,13 +336,13 @@ class TestPublish:
         root = _make_pack(tmp_path)
         server = self._fake_orchestrator({"/packs/p/versions/1.0.0": (201, b"")})
         base = f"http://127.0.0.1:{server.server_port}"
-        env = {**os.environ, "SMITHY_API_TOKEN": "tok"}
+        env = {**os.environ, "SMITHCORE_API_TOKEN": "tok"}
         try:
             result = subprocess.run(
                 [
                     sys.executable,
                     "-m",
-                    "smithy.pack",
+                    "smithcore.pack",
                     "push",
                     str(root),
                     "--name",
@@ -401,7 +401,7 @@ class TestRunFlowPack:
         }
         (root / "process.flow.json").write_text(json.dumps(flow), encoding="utf-8")
         (root / "tools.py").write_text(
-            "from smithy.core.tool import AbstractTool\n"
+            "from smithcore.core.tool import AbstractTool\n"
             "from typing import Any\n"
             "class M(AbstractTool):\n"
             "    @property\n"

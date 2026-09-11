@@ -19,10 +19,10 @@ from typing import Any, cast
 
 import pytest
 
-from smithy.core.errors import InvalidInput
-from smithy.core.http_queue import HttpQueue, HttpQueueError
-from smithy.core.queue import ClaimedItem, InMemoryQueue, QueueItem
-from smithy.core.transactions import run_transactions
+from smithcore.core.errors import InvalidInput
+from smithcore.core.http_queue import HttpQueue, HttpQueueError
+from smithcore.core.queue import ClaimedItem, InMemoryQueue, QueueItem
+from smithcore.core.transactions import run_transactions
 
 AGENT_ID = "agent-1"
 RUN_ID = "run-1"

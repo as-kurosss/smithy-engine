@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from smithy.core.registry import ToolRegistry
-from smithy.core.tool import tool
-from smithy.flow import FlowError, FlowRunner
+from smithcore.core.registry import ToolRegistry
+from smithcore.core.tool import tool
+from smithcore.flow import FlowError, FlowRunner
 
 
 def _registry() -> ToolRegistry:

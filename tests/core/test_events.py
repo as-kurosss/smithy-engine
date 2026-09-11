@@ -1,4 +1,4 @@
-"""Tests for smithy.core.events — ToolEvent, EventBus, Middleware."""
+"""Tests for smithcore.core.events — ToolEvent, EventBus, Middleware."""
 
 from __future__ import annotations
 
@@ -6,10 +6,10 @@ from typing import Any
 
 import pytest
 
-from smithy.core.errors import InvalidInput
-from smithy.core.events import EventBus, ToolEvent
-from smithy.core.tool import AbstractTool
-from smithy.facade import Smithy
+from smithcore.core.errors import InvalidInput
+from smithcore.core.events import EventBus, ToolEvent
+from smithcore.core.tool import AbstractTool
+from smithcore.facade import Smithcore
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -144,11 +144,11 @@ class TestEventBus:
 
 
 # ---------------------------------------------------------------------------
-# Smithy middleware integration
+# Smithcore middleware integration
 # ---------------------------------------------------------------------------
 
 
-class TestSmithyMiddleware:
+class TestSmithcoreMiddleware:
     def test_add_middleware(self) -> None:
         bus = EventBus()
 
@@ -166,7 +166,7 @@ class TestSmithyMiddleware:
             received.append(event)
             return event
 
-        bot = Smithy(tools=[StubTool()])
+        bot = Smithcore(tools=[StubTool()])
         bot.add_middleware(collector)
         await bot.call("stub.tool", x=1)
 
@@ -186,7 +186,7 @@ class TestSmithyMiddleware:
             received.append(event)
             return event
 
-        bot = Smithy(tools=[FailTool()])
+        bot = Smithcore(tools=[FailTool()])
         bot.add_middleware(collector)
         with pytest.raises(InvalidInput):
             await bot.call("stub.fail")
@@ -209,7 +209,7 @@ class TestSmithyMiddleware:
             events.append("b")
             return event
 
-        bot = Smithy(tools=[StubTool()])
+        bot = Smithcore(tools=[StubTool()])
         bot.add_middleware(a)
         bot.add_middleware(b)
         await bot.call("stub.tool")

@@ -8,13 +8,13 @@ from typing import Any
 
 import pytest
 
-from smithy.core.assets import EnvAssetProvider
-from smithy.core.errors import BusinessError, ElementNotFound, InfrastructureError
-from smithy.core.registry import ToolRegistry
-from smithy.core.selectors import SelectorStore
-from smithy.core.tool import AbstractTool, tool
-from smithy.flow import FlowError, FlowRunner, validate_document
-from smithy.windows.tools.selector_capture.api import CapturedSelector
+from smithcore.core.assets import EnvAssetProvider
+from smithcore.core.errors import BusinessError, ElementNotFound, InfrastructureError
+from smithcore.core.registry import ToolRegistry
+from smithcore.core.selectors import SelectorStore
+from smithcore.core.tool import AbstractTool, tool
+from smithcore.flow import FlowError, FlowRunner, validate_document
+from smithcore.windows.tools.selector_capture.api import CapturedSelector
 
 
 def _registry() -> ToolRegistry:
@@ -179,7 +179,7 @@ class TestOnError:
 
 class TestAssets:
     async def test_asset_interpolation(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("SMITHY_ASSET_DB_PASSWORD", "s3cret!")
+        monkeypatch.setenv("SMITHCORE_ASSET_DB_PASSWORD", "s3cret!")
         runner = FlowRunner(_registry())
         doc = _doc(
             [
@@ -201,7 +201,7 @@ class TestAssets:
         assert runner._variables["dsn"] == "Server=h;Uid=u;Pwd=s3cret!"
 
     async def test_asset_secret_redacted_in_log(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("SMITHY_ASSET_TOKEN", "topsecret")
+        monkeypatch.setenv("SMITHCORE_ASSET_TOKEN", "topsecret")
         log: list[tuple[str, str]] = []
         registry = _registry()
 
@@ -230,7 +230,7 @@ class TestAssets:
         assert "***" in rendered
 
     async def test_unknown_asset_fails_node(self) -> None:
-        runner = FlowRunner(_registry(), assets=EnvAssetProvider(prefix="SMITHY_NOPE_"))
+        runner = FlowRunner(_registry(), assets=EnvAssetProvider(prefix="SMITHCORE_NOPE_"))
         doc = _doc(
             [
                 {"id": "s", "kind": "start", "config": {}},
@@ -284,7 +284,7 @@ class TestSelectorKeys:
             ],
             _chain("s", "t", "e"),
         )
-        with pytest.raises(FlowError, match="SMITHY_DEV_CAPTURE"):
+        with pytest.raises(FlowError, match="SMITHCORE_DEV_CAPTURE"):
             await runner.run(doc)
 
     async def test_missing_key_captured_in_dev_mode(
@@ -298,7 +298,7 @@ class TestSelectorKeys:
             return CapturedSelector(selector={"automation_id": "btn1"})
 
         monkeypatch.setattr(
-            "smithy.windows.tools.selector_capture.capture_once_async", fake_capture
+            "smithcore.windows.tools.selector_capture.capture_once_async", fake_capture
         )
         runner = FlowRunner(_registry(), selector_store=store, dev_capture=True)
         doc = _doc(
@@ -329,7 +329,7 @@ class TestSelectorKeys:
             return CapturedSelector(selector={"automation_id": "fresh"})
 
         monkeypatch.setattr(
-            "smithy.windows.tools.selector_capture.capture_once_async", fake_capture
+            "smithcore.windows.tools.selector_capture.capture_once_async", fake_capture
         )
         runner = FlowRunner(_registry(), selector_store=store, dev_capture=True)
         doc = _doc(

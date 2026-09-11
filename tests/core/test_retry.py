@@ -1,4 +1,4 @@
-"""Tests for smithy.core.retry — RetryTool."""
+"""Tests for smithcore.core.retry — RetryTool."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ from typing import Any
 
 import pytest
 
-from smithy.core.errors import ElementNotFound, InvalidInput
-from smithy.core.retry import RetryTool
-from smithy.core.tool import AbstractTool
+from smithcore.core.errors import ElementNotFound, InvalidInput
+from smithcore.core.retry import RetryTool
+from smithcore.core.tool import AbstractTool
 
 
 class FlakyTool(AbstractTool):

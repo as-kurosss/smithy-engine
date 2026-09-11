@@ -1,4 +1,4 @@
-"""Tests for smithy.core.selectors — SelectorStore."""
+"""Tests for smithcore.core.selectors — SelectorStore."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from smithy.core.selectors import SelectorStore
+from smithcore.core.selectors import SelectorStore
 
 
 class TestSelectorStore:

@@ -3,14 +3,14 @@
 Init (dispatcher) seeds the queue once, then the framework loop takes over:
 claim → process_one → set_status → report. You only write process_one.
 
-Requires: pip install smithy[windows]
+Requires: pip install smithcore[windows]
 
 Queue backend is picked by environment, so local debugging can hit the
 real orchestrator queue (handy for post-mortem debugging after a failed run):
 
-    SMITHY_QUEUE=sqlite  local file bot-data/queue.db (default)
-    SMITHY_QUEUE=cloud   orchestrator queue (needs SMITHY_API_URL,
-                         SMITHY_AGENT_ID and SMITHY_TOKEN)
+    SMITHCORE_QUEUE=sqlite  local file bot-data/queue.db (default)
+    SMITHCORE_QUEUE=cloud   orchestrator queue (needs SMITHCORE_API_URL,
+                         SMITHCORE_AGENT_ID and SMITHCORE_TOKEN)
 
 Stop cooperatively like UiPath's Stop button: create a file named STOP
 next to this script. The current item finishes, new ones are not claimed.
@@ -23,20 +23,20 @@ import os
 from pathlib import Path
 from typing import Any
 
-from smithy import (
+from smithcore import (
     BusinessError,
     ClaimedItem,
     HttpQueue,
     Queue,
-    Smithy,
+    Smithcore,
     SqliteQueue,
     TransactionContextMiddleware,
     load_config,
     run_transactions_async,
 )
-from smithy.windows.tools.click import ClickTool
-from smithy.windows.tools.process import ProcessTool
-from smithy.windows.tools.wait import WaitTool
+from smithcore.windows.tools.click import ClickTool
+from smithcore.windows.tools.process import ProcessTool
+from smithcore.windows.tools.wait import WaitTool
 
 HERE = Path(__file__).resolve().parent
 
@@ -47,7 +47,7 @@ CONFIG = load_config(
     required=["robot.queue", "robot.run_id", "retry.max_attempts"],
 )
 
-bot = Smithy(tools=[ProcessTool(), ClickTool(), WaitTool()])
+bot = Smithcore(tools=[ProcessTool(), ClickTool(), WaitTool()])
 bot.add_middleware(TransactionContextMiddleware())  # stamp transaction_id into events
 
 
@@ -62,11 +62,11 @@ bot.add_middleware(log_event)
 
 def make_queue() -> Queue:
     """Local SQLite file by default; orchestrator queue when asked."""
-    if os.getenv("SMITHY_QUEUE", "sqlite").lower() == "cloud":
+    if os.getenv("SMITHCORE_QUEUE", "sqlite").lower() == "cloud":
         return HttpQueue(
-            os.environ["SMITHY_API_URL"],
-            agent_id=os.environ["SMITHY_AGENT_ID"],
-            token=os.environ["SMITHY_TOKEN"],
+            os.environ["SMITHCORE_API_URL"],
+            agent_id=os.environ["SMITHCORE_AGENT_ID"],
+            token=os.environ["SMITHCORE_TOKEN"],
         )
     db = HERE / "bot-data" / "queue.db"
     db.parent.mkdir(parents=True, exist_ok=True)
@@ -108,7 +108,7 @@ async def main() -> None:
             queue,
             process_one,
             queue_name=CONFIG.robot.queue,
-            run_id=os.getenv("SMITHY_RUN_ID", str(CONFIG.robot.run_id)),
+            run_id=os.getenv("SMITHCORE_RUN_ID", str(CONFIG.robot.run_id)),
             on_init=dispatcher,
             on_progress=lambda outcome: print(f"{outcome.status}: {outcome.item_id}"),
             stop_checker=lambda: (HERE / "STOP").exists(),

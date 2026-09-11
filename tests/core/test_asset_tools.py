@@ -6,11 +6,11 @@ from typing import Any
 
 import pytest
 
-from smithy.core.asset_tools import AssetCredentialTool, AssetGetTool
-from smithy.core.assets import EnvAssetProvider, HttpAssetProvider, asset_provider_from_env
-from smithy.core.errors import InvalidInput
-from smithy.core.registry import ToolRegistry
-from smithy.flow import FlowRunner
+from smithcore.core.asset_tools import AssetCredentialTool, AssetGetTool
+from smithcore.core.assets import EnvAssetProvider, HttpAssetProvider, asset_provider_from_env
+from smithcore.core.errors import InvalidInput
+from smithcore.core.registry import ToolRegistry
+from smithcore.flow import FlowRunner
 
 
 def _doc(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> dict[str, Any]:
@@ -27,7 +27,7 @@ def _registry() -> ToolRegistry:
 class TestAssetTools:
     @pytest.mark.asyncio
     async def test_get_text_asset(self, monkeypatch: Any) -> None:
-        monkeypatch.setenv("SMITHY_ASSET_CRM_URL", "https://crm.example")
+        monkeypatch.setenv("SMITHCORE_ASSET_CRM_URL", "https://crm.example")
         result = await AssetGetTool().execute({"name": "crm-url"})
         assert result == "https://crm.example"
 
@@ -38,8 +38,8 @@ class TestAssetTools:
 
     @pytest.mark.asyncio
     async def test_credential_fields(self, monkeypatch: Any) -> None:
-        monkeypatch.setenv("SMITHY_ASSET_CRM_LOGIN", "alice")
-        monkeypatch.setenv("SMITHY_ASSET_CRM_PASSWORD", "s3cret")
+        monkeypatch.setenv("SMITHCORE_ASSET_CRM_LOGIN", "alice")
+        monkeypatch.setenv("SMITHCORE_ASSET_CRM_PASSWORD", "s3cret")
         result = await AssetCredentialTool().execute({"name": "crm"})
         assert result == {"login": "alice", "password": "s3cret"}
 
@@ -52,7 +52,7 @@ class TestAssetTools:
 class TestSecretHandling:
     @pytest.mark.asyncio
     async def test_value_is_redacted_and_excluded_from_results(self, monkeypatch: Any) -> None:
-        monkeypatch.setenv("SMITHY_ASSET_CRM_PASSWORD", "topsecret")
+        monkeypatch.setenv("SMITHCORE_ASSET_CRM_PASSWORD", "topsecret")
         logs: list[tuple[str, str]] = []
         doc = _doc(
             [
@@ -84,18 +84,18 @@ class TestSecretHandling:
 
 class TestProviderSelection:
     def test_env_provider_credential(self, monkeypatch: Any) -> None:
-        monkeypatch.setenv("SMITHY_ASSET_CRM_LOGIN", "alice")
-        monkeypatch.setenv("SMITHY_ASSET_CRM_PASSWORD", "s3cret")
+        monkeypatch.setenv("SMITHCORE_ASSET_CRM_LOGIN", "alice")
+        monkeypatch.setenv("SMITHCORE_ASSET_CRM_PASSWORD", "s3cret")
         assert EnvAssetProvider().credential("crm") == {"login": "alice", "password": "s3cret"}
 
     def test_factory_prefers_orchestrator(self, monkeypatch: Any) -> None:
-        monkeypatch.setenv("SMITHY_ORCHESTRATOR_URL", "http://127.0.0.1:9")
-        monkeypatch.setenv("SMITHY_AGENT_ID", "a1")
-        monkeypatch.setenv("SMITHY_AGENT_TOKEN", "t")
+        monkeypatch.setenv("SMITHCORE_ORCHESTRATOR_URL", "http://127.0.0.1:9")
+        monkeypatch.setenv("SMITHCORE_AGENT_ID", "a1")
+        monkeypatch.setenv("SMITHCORE_AGENT_TOKEN", "t")
         assert isinstance(asset_provider_from_env(), HttpAssetProvider)
 
     def test_factory_falls_back_to_env(self, monkeypatch: Any) -> None:
-        for key in ("SMITHY_ORCHESTRATOR_URL", "SMITHY_AGENT_ID", "SMITHY_AGENT_TOKEN"):
+        for key in ("SMITHCORE_ORCHESTRATOR_URL", "SMITHCORE_AGENT_ID", "SMITHCORE_AGENT_TOKEN"):
             monkeypatch.delenv(key, raising=False)
         assert isinstance(asset_provider_from_env(), EnvAssetProvider)
 

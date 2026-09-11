@@ -1,9 +1,9 @@
-"""Tests for smithy.windows.tools.keyboard — normalize_keys."""
+"""Tests for smithcore.windows.tools.keyboard — normalize_keys."""
 
 import pytest
 
-from smithy.windows.tools import keyboard
-from smithy.windows.tools.keyboard import normalize_keys
+from smithcore.windows.tools import keyboard
+from smithcore.windows.tools.keyboard import normalize_keys
 
 
 class TestNormalizeKeys:

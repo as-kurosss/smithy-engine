@@ -2,7 +2,7 @@
 
 import pytest
 
-from smithy.core.registry import ToolRegistry
+from smithcore.core.registry import ToolRegistry
 
 
 @pytest.fixture

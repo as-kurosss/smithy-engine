@@ -1,5 +1,5 @@
 {
-  "schema": "smithy-template-v1",
+  "schema": "smithcore-template-v1",
   "title": "Notepad demo",
   "description": "Opens Notepad, types your text, saves a screenshot and closes it.",
   "category": "Demo",
@@ -10,7 +10,7 @@
       "name": "text",
       "type": "string",
       "label": "Text to type",
-      "default": "Hello from Smithy!",
+      "default": "Hello from Smithcore!",
       "required": true
     }
   ]

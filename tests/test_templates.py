@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from smithy.core.errors import InvalidInput
-from smithy.pack import build_pack, load_template, validate_template
+from smithcore.core.errors import InvalidInput
+from smithcore.pack import build_pack, load_template, validate_template
 
 
 def _flow() -> dict[str, object]:
@@ -45,7 +45,7 @@ def test_flow_json_is_used_as_process_stage(tmp_path: Path) -> None:
 
 def test_template_summary_is_embedded_in_manifest(tmp_path: Path) -> None:
     template = {
-        "schema": "smithy-template-v1",
+        "schema": "smithcore-template-v1",
         "title": "Notepad demo",
         "category": "Demo",
         "params": [{"name": "text", "type": "string", "default": "hi"}],

@@ -1,9 +1,9 @@
-"""Tests for smithy.windows.tools.input_text — plain text only."""
+"""Tests for smithcore.windows.tools.input_text — plain text only."""
 
 import pytest
 
-from smithy.core.errors import InvalidInput
-from smithy.windows.tools.input_text import InputTextTool, _send
+from smithcore.core.errors import InvalidInput
+from smithcore.windows.tools.input_text import InputTextTool, _send
 
 
 class TestInputText:

@@ -1,4 +1,4 @@
-"""Tests for smithy.core.schema and registry-level config validation."""
+"""Tests for smithcore.core.schema and registry-level config validation."""
 
 from __future__ import annotations
 
@@ -6,10 +6,10 @@ from typing import Any
 
 import pytest
 
-from smithy.core.errors import InvalidInput
-from smithy.core.registry import ToolRegistry
-from smithy.core.schema import validate_against_schema
-from smithy.core.tool import AbstractTool
+from smithcore.core.errors import InvalidInput
+from smithcore.core.registry import ToolRegistry
+from smithcore.core.schema import validate_against_schema
+from smithcore.core.tool import AbstractTool
 
 
 class TestValidateAgainstSchema:

@@ -1,6 +1,6 @@
-"""Tests for smithy.core.errors."""
+"""Tests for smithcore.core.errors."""
 
-from smithy.core.errors import (
+from smithcore.core.errors import (
     BusinessError,
     Cancelled,
     ConfigError,

@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from smithy.core.errors import InvalidInput
-from smithy.windows.tools.process import ProcessTool
+from smithcore.core.errors import InvalidInput
+from smithcore.windows.tools.process import ProcessTool
 
 
 @pytest.fixture(autouse=True)
 def _clean_allowlist_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("SMITHY_ALLOWED_COMMANDS", raising=False)
+    monkeypatch.delenv("SMITHCORE_ALLOWED_COMMANDS", raising=False)
 
 
 class TestProcessAllowlist:
@@ -36,12 +36,12 @@ class TestProcessAllowlist:
         assert tool.allowed_commands == {"myapp.exe", "other.exe"}
 
     def test_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("SMITHY_ALLOWED_COMMANDS", "custom.exe, other.exe")
+        monkeypatch.setenv("SMITHCORE_ALLOWED_COMMANDS", "custom.exe, other.exe")
         tool = ProcessTool()
         assert tool.allowed_commands == {"custom.exe", "other.exe"}
 
     def test_empty_env_denies_everything(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("SMITHY_ALLOWED_COMMANDS", "")
+        monkeypatch.setenv("SMITHCORE_ALLOWED_COMMANDS", "")
         tool = ProcessTool()
         assert tool.allowed_commands == set()
 
@@ -49,13 +49,13 @@ class TestProcessAllowlist:
     async def test_empty_env_blocks_notepad_without_spawning(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("SMITHY_ALLOWED_COMMANDS", "")
+        monkeypatch.setenv("SMITHCORE_ALLOWED_COMMANDS", "")
         tool = ProcessTool()
         with pytest.raises(InvalidInput, match="not in the allowed list"):
             await tool.execute({"action": "start", "command": "notepad.exe"})
 
     def test_constructor_beats_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("SMITHY_ALLOWED_COMMANDS", "env-app.exe")
+        monkeypatch.setenv("SMITHCORE_ALLOWED_COMMANDS", "env-app.exe")
         tool = ProcessTool(allowed_commands=["ctor-app.exe"])
         assert tool.allowed_commands == {"ctor-app.exe"}
 

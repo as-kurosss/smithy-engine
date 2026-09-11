@@ -10,20 +10,20 @@ from typing import Any
 
 import pytest
 
-from smithy.core.config import load_config
-from smithy.core.errors import InvalidInput, PlatformError
-from smithy.core.files import FileTool
-from smithy.core.queue import InMemoryQueue
-from smithy.core.registry import ToolRegistry
-from smithy.core.retry import RetryTool
-from smithy.core.tool import AbstractTool, tool
-from smithy.flow import (
+from smithcore.core.config import load_config
+from smithcore.core.errors import InvalidInput, PlatformError
+from smithcore.core.files import FileTool
+from smithcore.core.queue import InMemoryQueue
+from smithcore.core.registry import ToolRegistry
+from smithcore.core.retry import RetryTool
+from smithcore.core.tool import AbstractTool, tool
+from smithcore.flow import (
     FlowError,
     FlowRunner,
     parse_set_value,
     validate_document,
 )
-from smithy.windows.tools.keyboard import _INPUT
+from smithcore.windows.tools.keyboard import _INPUT
 
 # ------------------------------------------------------------------ config
 
@@ -32,7 +32,7 @@ class TestConfigEnvOverlay:
     def test_asset_namespace_not_overlaid(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("SMITHY_ASSET_DB_PASSWORD", "SUPERSECRET")
+        monkeypatch.setenv("SMITHCORE_ASSET_DB_PASSWORD", "SUPERSECRET")
         path = tmp_path / "bot.toml"
         path.write_text('[robot]\nname = "x"\n', encoding="utf-8")
         config = load_config(path)
@@ -42,8 +42,8 @@ class TestConfigEnvOverlay:
     def test_dates_and_nonfinite_stay_strings(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("SMITHY_RUN_DATE", "2023-01-01")
-        monkeypatch.setenv("SMITHY_RATIO", "nan")
+        monkeypatch.setenv("SMITHCORE_RUN_DATE", "2023-01-01")
+        monkeypatch.setenv("SMITHCORE_RATIO", "nan")
         path = tmp_path / "bot.toml"
         path.write_text("", encoding="utf-8")
         data = load_config(path).to_dict()
@@ -59,7 +59,7 @@ class TestFileSandbox:
     async def test_glob_traversal_rejected(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("SMITHY_FILE_ROOT", str(tmp_path))
+        monkeypatch.setenv("SMITHCORE_FILE_ROOT", str(tmp_path))
         with pytest.raises(InvalidInput, match="pattern"):
             await FileTool().execute({"action": "list", "path": ".", "pattern": "../*.txt"})
 
@@ -304,7 +304,7 @@ def test_input_struct_matches_native_size() -> None:
 
 class TestProcessHardening:
     def test_path_qualified_command_must_be_on_path(self, tmp_path: Path) -> None:
-        from smithy.windows.tools.process import _resolve_command_path
+        from smithcore.windows.tools.process import _resolve_command_path
 
         planted = tmp_path / "notepad.exe"
         planted.write_bytes(b"MZ")
@@ -315,10 +315,10 @@ class TestProcessHardening:
     async def test_stop_by_pid_requires_allowlisted_image(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from smithy.windows.tools.process import ProcessTool
+        from smithcore.windows.tools.process import ProcessTool
 
         monkeypatch.setattr(
-            "smithy.windows.tools.process._query_image_name", lambda pid: "lsass.exe"
+            "smithcore.windows.tools.process._query_image_name", lambda pid: "lsass.exe"
         )
         with pytest.raises(InvalidInput, match="allowed list"):
             await ProcessTool().execute({"action": "stop", "pid": 4})
@@ -329,7 +329,7 @@ class TestProcessHardening:
 
 class TestPackHardening:
     def _make_pack(self, tmp_path: Path) -> Path:
-        from smithy.pack import build_pack
+        from smithcore.pack import build_pack
 
         root = tmp_path / "pack"
         root.mkdir()
@@ -340,7 +340,7 @@ class TestPackHardening:
         return root
 
     def test_verify_rejects_extra_file(self, tmp_path: Path) -> None:
-        from smithy.pack import verify_pack
+        from smithcore.pack import verify_pack
 
         root = self._make_pack(tmp_path)
         (root / "tools.py").write_text("# planted\n", encoding="utf-8")
@@ -348,7 +348,7 @@ class TestPackHardening:
         assert any("not in the manifest" in problem for problem in problems)
 
     def test_verify_rejects_manifest_traversal(self, tmp_path: Path) -> None:
-        from smithy.pack import PACK_MANIFEST, verify_pack
+        from smithcore.pack import PACK_MANIFEST, verify_pack
 
         root = self._make_pack(tmp_path)
         manifest = json.loads((root / PACK_MANIFEST).read_text(encoding="utf-8"))
@@ -358,7 +358,7 @@ class TestPackHardening:
         assert any("unsafe path" in problem for problem in problems)
 
     def test_fetch_replaces_stale_destination(self, tmp_path: Path) -> None:
-        from smithy.pack import fetch_pack, zip_pack
+        from smithcore.pack import fetch_pack, zip_pack
 
         root = self._make_pack(tmp_path)
         archive = zip_pack(root, out=tmp_path / "p.zip")
@@ -370,7 +370,7 @@ class TestPackHardening:
         assert (dest / "pack.json").is_file()
 
     def test_manifest_lists_file(self) -> None:
-        from smithy.pack import manifest_lists_file
+        from smithcore.pack import manifest_lists_file
 
         manifest = {"files": [{"path": "tools.py", "sha256": "0" * 64}]}
         assert manifest_lists_file(manifest, "tools.py") is True
@@ -384,8 +384,8 @@ class TestRunFlowTransactional:
     def test_cli_vars_and_payload_reach_the_flow(self, tmp_path: Path) -> None:
         import sqlite3
 
-        from smithy.core.queue import SqliteQueue
-        from smithy.run_flow import main
+        from smithcore.core.queue import SqliteQueue
+        from smithcore.run_flow import main
 
         flow = tmp_path / "process.flow.json"
         flow.write_text(

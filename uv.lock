@@ -1417,7 +1417,7 @@ wheels = [
 ]
 
 [[package]]
-name = "smithy-engine"
+name = "smithcore-engine"
 version = "0.8.5"
 source = { editable = "." }
 

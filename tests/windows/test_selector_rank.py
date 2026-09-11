@@ -1,4 +1,4 @@
-"""Tests for smithy.windows.selector_rank + strict mode + ranked generation."""
+"""Tests for smithcore.windows.selector_rank + strict mode + ranked generation."""
 
 from __future__ import annotations
 
@@ -10,9 +10,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from smithy.core.errors import ElementNotFound, InvalidInput
-from smithy.windows.selector import ElementSelector
-from smithy.windows.selector_rank import (
+from smithcore.core.errors import ElementNotFound, InvalidInput
+from smithcore.windows.selector import ElementSelector
+from smithcore.windows.selector_rank import (
     RankedSelector,
     candidate_configs,
     control_type_display,
@@ -20,7 +20,7 @@ from smithy.windows.selector_rank import (
     rank_candidates,
     stability_penalty,
 )
-from smithy.windows.tools.selector_capture.capture import BestSelector
+from smithcore.windows.tools.selector_capture.capture import BestSelector
 
 
 def _always(n: int) -> Callable[[dict[str, str]], int]:
@@ -326,7 +326,7 @@ class TestCountFromDesktop:
 class TestStrictResolve:
     @pytest.mark.asyncio
     async def test_ambiguous_raises_invalid_input(self) -> None:
-        from smithy.windows.tools._resolve import resolve_element
+        from smithcore.windows.tools._resolve import resolve_element
 
         with (
             patch.object(ElementSelector, "count_from_desktop", return_value=2),
@@ -336,7 +336,7 @@ class TestStrictResolve:
 
     @pytest.mark.asyncio
     async def test_missing_raises_not_found(self) -> None:
-        from smithy.windows.tools._resolve import resolve_element
+        from smithcore.windows.tools._resolve import resolve_element
 
         with (
             patch.object(ElementSelector, "count_from_desktop", return_value=0),
@@ -346,7 +346,7 @@ class TestStrictResolve:
 
     @pytest.mark.asyncio
     async def test_unique_resolves_normally(self) -> None:
-        from smithy.windows.tools._resolve import resolve_element
+        from smithcore.windows.tools._resolve import resolve_element
 
         element = MagicMock()
         with (
@@ -357,7 +357,7 @@ class TestStrictResolve:
 
     @pytest.mark.asyncio
     async def test_non_strict_skips_count(self) -> None:
-        from smithy.windows.tools._resolve import resolve_element
+        from smithcore.windows.tools._resolve import resolve_element
 
         element = MagicMock()
         with (
@@ -370,7 +370,7 @@ class TestStrictResolve:
 
 class TestRankedGeneration:
     def test_click_uses_ranked_config(self) -> None:
-        from smithy.windows.tools.selector_capture.generate import (
+        from smithcore.windows.tools.selector_capture.generate import (
             GenerateParams,
             ToolType,
             generate_nodes_from_config,
@@ -384,7 +384,7 @@ class TestRankedGeneration:
         assert nodes[0].args == {"automation_id": "btnOk"}
 
     def test_input_text_adds_text(self) -> None:
-        from smithy.windows.tools.selector_capture.generate import (
+        from smithcore.windows.tools.selector_capture.generate import (
             GenerateParams,
             ToolType,
             generate_nodes_from_config,
@@ -398,7 +398,7 @@ class TestRankedGeneration:
         assert nodes[0].args == {"automation_id": "btnOk", "text": "hi"}
 
     def test_wait_ignores_selector(self) -> None:
-        from smithy.windows.tools.selector_capture.generate import (
+        from smithcore.windows.tools.selector_capture.generate import (
             GenerateParams,
             ToolType,
             generate_nodes_from_config,
@@ -412,14 +412,14 @@ class TestRankedGeneration:
         assert nodes[0].args == {"timeout_ms": 500}
 
     def test_inline_selector_translates_numeric_type(self) -> None:
-        from smithy.windows.tools.selector_capture.generate import build_inline_selector
+        from smithcore.windows.tools.selector_capture.generate import build_inline_selector
 
         cfg = build_inline_selector(BestSelector(control_type="50000", name="OK"))
         assert cfg["control_type"] == "button"
         assert cfg["name"] == "OK"
 
     def test_inline_selector_drops_unknown_type(self) -> None:
-        from smithy.windows.tools.selector_capture.generate import build_inline_selector
+        from smithcore.windows.tools.selector_capture.generate import build_inline_selector
 
         cfg = build_inline_selector(BestSelector(control_type="99999", name="OK"))
         assert "control_type" not in cfg
@@ -428,11 +428,11 @@ class TestRankedGeneration:
 
 class TestRankCapturedFallback:
     def test_rank_failure_returns_none(self) -> None:
-        from smithy.windows.tools.selector_capture.recorder import _rank_captured
+        from smithcore.windows.tools.selector_capture.recorder import _rank_captured
 
         sel = BestSelector(control_type="Button", name="OK")
         with patch(
-            "smithy.windows.selector_rank.rank_best_selector",
+            "smithcore.windows.selector_rank.rank_best_selector",
             side_effect=RuntimeError("uia down"),
         ):
             assert _rank_captured(sel) is None

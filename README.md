@@ -1,4 +1,4 @@
-# Smithy
+# Smithcore
 
 Free Python RPA engine — create automation bots with simple async API.
 
@@ -6,10 +6,10 @@ Free Python RPA engine — create automation bots with simple async API.
 
 ```python
 import asyncio
-from smithy import Smithy
-from smithy.windows.tools import windows_tools
+from smithcore import Smithcore
+from smithcore.windows.tools import windows_tools
 
-bot = Smithy(tools=windows_tools())
+bot = Smithcore(tools=windows_tools())
 
 
 async def main() -> None:
@@ -50,7 +50,7 @@ asyncio.run(main())
 - **HighlightTool** (`windows.highlight`) — flash a colored rectangle for debugging selectors
 - **GetTableTool** (`windows.get_table`) — extract DataGrid/ListView/TreeView rows as JSON
 - **ControlActionTool** (`windows.control_action`) — native UIA pattern actions (`invoke`, `toggle`, `expand`, `collapse`, `select`, `focus`) that keep working when a window is covered or unfocused
-- **FileTool** (`file`) — `read`/`write`/`append`/`copy`/`move`/`delete`/`exists`/`wait_for`/`list`; optional `SMITHY_FILE_ROOT` sandbox confines every path
+- **FileTool** (`file`) — `read`/`write`/`append`/`copy`/`move`/`delete`/`exists`/`wait_for`/`list`; optional `SMITHCORE_FILE_ROOT` sandbox confines every path
 - **ExcelRead/Write/AppendTool** (`excel.read` / `excel.write` / `excel.append`, extra `[excel]`) — xlsx via openpyxl, honors the same file sandbox
 - **FindImageTool / ClickImageTool** (`windows.find_image`, `windows.click_image`, extra `[image]`) — OpenCV template matching for UIA-invisible UIs (Citrix/RDP/Java/canvas)
 - **OcrTool** (`windows.ocr`) — text from an image file or screen region via the built-in Windows OCR engine, zero extra dependencies
@@ -59,14 +59,14 @@ All UI tools accept optional `pid` (or a `ProcessHandle`) to scope element searc
 
 `ProcessTool` only starts executables from its allowlist — pass
 `windows_tools(allowed_commands=["myapp.exe"])` or set
-`SMITHY_ALLOWED_COMMANDS="myapp.exe,other.exe"` to override the demo list.
+`SMITHCORE_ALLOWED_COMMANDS="myapp.exe,other.exe"` to override the demo list.
 
 ## Custom Tools
 
 Create tools from simple async functions:
 
 ```python
-from smithy import Smithy, tool
+from smithcore import Smithcore, tool
 
 
 @tool("greet", description="Greet a person")
@@ -75,7 +75,7 @@ async def greet(config: dict) -> dict:
     return {"message": f"Hello, {name}!"}
 
 
-bot = Smithy(tools=[greet])
+bot = Smithcore(tools=[greet])
 
 
 async def main() -> None:
@@ -93,10 +93,10 @@ dev mode, and record each unknown selector interactively — hover the
 element, press **CTRL** (ESC cancels). A stored key runs silently; a
 missing key or a stale one (`ElementNotFound` mid-run) triggers a
 capture, persists it to `selectors.json`, and retries. In production
-(no `SMITHY_DEV_CAPTURE`) both fail honestly:
+(no `SMITHCORE_DEV_CAPTURE`) both fail honestly:
 
 ```python
-bot = Smithy(tools=windows_tools(), dev_capture=True)
+bot = Smithcore(tools=windows_tools(), dev_capture=True)
 await bot.click(key="login.submit")   # first run: capture; then: silent
 await bot.input_text(key="login.password", text=bot.asset("login.password"))
 ```
@@ -106,7 +106,7 @@ the tool events the bot emits, so it cannot leak into the JSONL audit log
 or a trace. (Pass secrets through an asset reference — a literal string
 that was never fetched via an asset cannot be auto-redacted.)
 
-Enable dev mode with `dev_capture=True`, the `SMITHY_DEV_CAPTURE=1` env,
+Enable dev mode with `dev_capture=True`, the `SMITHCORE_DEV_CAPTURE=1` env,
 or `run_flow --capture` for flows (`key` fields in tool configs work the
 same way). Keys never appear in the audit log as resolved fields — the
 tracer records them as portable `key` references (see Packs below).
@@ -118,31 +118,31 @@ The delivery unit is a *pack*: a directory (flows, `tools.py`,
 per file. Clients refuse to run a tampered bot:
 
 ```bash
-python -m smithy.pack build bot_dir --name my-bot --version 1.0
-python -m smithy.pack verify bot_dir
-python -m smithy.pack zip bot_dir --out my-bot.zip
-python -m smithy.pack fetch https://cloud.example.com/bot.zip --dest bot_dir
+python -m smithcore.pack build bot_dir --name my-bot --version 1.0
+python -m smithcore.pack verify bot_dir
+python -m smithcore.pack zip bot_dir --out my-bot.zip
+python -m smithcore.pack fetch https://cloud.example.com/bot.zip --dest bot_dir
 ```
 
 One step from dev to the orchestrator — build, verify, zip and upload:
 
 ```bash
-python -m smithy.pack push bot_dir --name my-bot --version 1.0 \
+python -m smithcore.pack push bot_dir --name my-bot --version 1.0 \
   --api-url https://cloud.example.com/api
 ```
 
-`--api-url` defaults to `$SMITHY_API_URL`, the operator token comes from
-`$SMITHY_API_TOKEN`. In VSCode, the bundled `.vscode/tasks.json` exposes
+`--api-url` defaults to `$SMITHCORE_API_URL`, the operator token comes from
+`$SMITHCORE_API_TOKEN`. In VSCode, the bundled `.vscode/tasks.json` exposes
 this as the default build task (`Ctrl+Shift+B` → "pack: push").
 
 Run a stage straight from the pack (manifest is verified first; `tools.py`
 and `selectors.json` are picked up automatically):
 
 ```bash
-python -m smithy.run_flow --pack bot_dir --stage process
+python -m smithcore.run_flow --pack bot_dir --stage process
 ```
 
-The tracer is the dev-side "converter": `Smithy(trace="bot.flow.json")`
+The tracer is the dev-side "converter": `Smithcore(trace="bot.flow.json")`
 records every successful tool call as a v2 `tool` node, keyed calls as
 portable `key` references — run your bot script once, feed the resulting
 flow document into the pack.
@@ -154,8 +154,8 @@ queue (local SQLite file or orchestrator via `HttpQueue`):
 
 ```python
 import asyncio
-from smithy import InMemoryQueue, run_transactions_async
-from smithy.core.errors import BusinessError
+from smithcore import InMemoryQueue, run_transactions_async
+from smithcore.core.errors import BusinessError
 
 queue = InMemoryQueue()
 queue.get_or_create_queue("invoices", max_attempts=3)
@@ -188,7 +188,7 @@ One TOML per robot (replaces the two-column Excel sheet), validated up
 front — the bot fails in Init, never mid-run:
 
 ```python
-from smithy import load_config
+from smithcore import load_config
 
 CONFIG = load_config(
     "reframework_bot.toml",
@@ -198,15 +198,15 @@ CONFIG = load_config(
 print(CONFIG.robot.queue)  # attribute access, frozen after load
 ```
 
-Per-environment tweaks without editing TOML via `SMITHY_*` env vars:
-`SMITHY_ROBOT__QUEUE=invoices-prod` overrides `robot.queue` (`__` nests,
+Per-environment tweaks without editing TOML via `SMITHCORE_*` env vars:
+`SMITHCORE_ROBOT__QUEUE=invoices-prod` overrides `robot.queue` (`__` nests,
 values are TOML-typed). Secrets never live here — only references to
 orchestrator assets. See [`examples/config_demo.py`](examples/config_demo.py).
 
 ## Error Handling
 
 ```python
-from smithy.core.errors import InvalidInput, ElementNotFound, PlatformError
+from smithcore.core.errors import InvalidInput, ElementNotFound, PlatformError
 
 try:
     await bot.click(app, name="Nonexistent")
@@ -225,8 +225,8 @@ check. The winning selector ships with `high`/`medium`/`low` confidence
 plus warnings — `low` means the element needs an anchor, not blind trust:
 
 ```python
-from smithy.windows.selector_rank import rank_best_selector
-from smithy.windows.tools.selector_capture.capture import capture_at_point
+from smithcore.windows.selector_rank import rank_best_selector
+from smithcore.windows.tools.selector_capture.capture import capture_at_point
 
 _, sel = capture_at_point(400, 300)
 ranked = rank_best_selector(sel)
@@ -244,16 +244,16 @@ translated to names automatically.
 A dev utility for inspecting UI elements at screen coordinates and generating tool configs:
 
 ```bash
-    pip install smithy-engine[capture]
+    pip install smithcore-engine[capture]
 
 # Single capture mode — one flow node
-python -m smithy.windows.tools.selector_capture single -o selectors.json
+python -m smithcore.windows.tools.selector_capture single -o selectors.json
 
 # Series mode — auto-record clicks and typing
-python -m smithy.windows.tools.selector_capture series -o recording.json
+python -m smithcore.windows.tools.selector_capture series -o recording.json
 
 # Interactive record mode
-python -m smithy.windows.tools.selector_capture record -o flow.json
+python -m smithcore.windows.tools.selector_capture record -o flow.json
 ```
 
 All three modes write the same shape — `{"tool": "selector-capture",
@@ -271,7 +271,7 @@ flow back — typed text **is** preserved:
 
 ```python
 import threading
-from smithy.windows.tools.selector_capture import nodes_to_flow, record_series
+from smithcore.windows.tools.selector_capture import nodes_to_flow, record_series
 
 stop = threading.Event()
 nodes = record_series(stop, on_step=print)   # click around, type, then: stop.set()
@@ -284,13 +284,13 @@ Any capture file renders as a replayable bot script — record once, get
 runnable code:
 
 ```bash
-python -m smithy.windows.tools.selector_capture emit -i flow.json -o bot.py
+python -m smithcore.windows.tools.selector_capture emit -i flow.json -o bot.py
 
 # ...or in one pass, straight from recording:
-python -m smithy.windows.tools.selector_capture record -o flow.json --emit bot.py
+python -m smithcore.windows.tools.selector_capture record -o flow.json --emit bot.py
 ```
 
-The script uses `Smithy(tools=windows_tools())` with one `await bot.*`
+The script uses `Smithcore(tools=windows_tools())` with one `await bot.*`
 call per node. No magic: the recorder never sees the launched process
 (so there's a `TODO` showing `process_run` + PID scoping), uncaptured
 `input_text` gets an explicit `text="TODO: fill in"` placeholder, and
@@ -299,15 +299,15 @@ editor, fill in the TODOs, run.
 
 ## Visual Editor
 
-The flow is built in [smithy-designer](https://github.com/as-kurosss/smithy-designer) —
+The flow is built in [smithcore-designer](https://github.com/as-kurosss/smithcore-designer) —
 a separate visual editor (MIT): drag-and-drop canvas, step debugger with
 breakpoints, XML-like selectors, typed variables. Click **Record**, perform
 the actions on the desktop (clicks + typed text are captured), and the
 recording lands on the canvas as a runnable flow.
 
 ```bash
-pip install smithy-designer
-smithy-designer flow.json
+pip install smithcore-designer
+smithcore-designer flow.json
 ```
 
 ## Flow format (v2)
@@ -370,7 +370,7 @@ main graph. The main entry is `flow.json`; put reusable units under
 ### Running a flow
 
 ```bash
-python -m smithy.run_flow flow.json --set name=value   # exit 0 = finished
+python -m smithcore.run_flow flow.json --set name=value   # exit 0 = finished
 ```
 
 Exit codes: `0` finished, `1` validation/node failure, `2` stopped
@@ -378,28 +378,28 @@ Exit codes: `0` finished, `1` validation/node failure, `2` stopped
 requested stop. Other modes:
 
 ```bash
-python -m smithy.run_flow flow.json --validate         # dry-run, nothing executes
-python -m smithy.run_flow flow.json --vars vars.json --payload item.json
-python -m smithy.run_flow flow.json --tools my_tools.py
-# REFramework loop over a queue (SQLite or smithy-cloud):
-python -m smithy.run_flow flow.json --transactional --queue invoices --db q.db
-python -m smithy.run_flow flow.json --transactional --queue invoices --cloud URL --agent ID
+python -m smithcore.run_flow flow.json --validate         # dry-run, nothing executes
+python -m smithcore.run_flow flow.json --vars vars.json --payload item.json
+python -m smithcore.run_flow flow.json --tools my_tools.py
+# REFramework loop over a queue (SQLite or smithcore-cloud):
+python -m smithcore.run_flow flow.json --transactional --queue invoices --db q.db
+python -m smithcore.run_flow flow.json --transactional --queue invoices --cloud URL --agent ID
 ```
 
-Or programmatically: `smithy.flow.FlowRunner(registry).run(doc)`.
+Or programmatically: `smithcore.flow.FlowRunner(registry).run(doc)`.
 
 ### Delivery contract (packs)
 
 Packs are **flow-only**: the agent runs the flow itself, so no `main.py`
-runner shim is shipped. `smithy.pack build` writes a `pack.json` manifest
-(SHA-256 per file) and `smithy.pack push` uploads the archive; agents
-fetch and verify it with `smithy.pack fetch`:
+runner shim is shipped. `smithcore.pack build` writes a `pack.json` manifest
+(SHA-256 per file) and `smithcore.pack push` uploads the archive; agents
+fetch and verify it with `smithcore.pack fetch`:
 
 ```bash
-python -m smithy.pack build ./my-pack --name invoices --version 1.0.0
-python -m smithy.pack push  ./my-pack --name invoices --version 1.0.0
-python -m smithy.pack fetch https://host/api/packs/invoices/versions/1.0.0 --dest ./pack
-python -m smithy.run_flow --pack ./pack --stage process
+python -m smithcore.pack build ./my-pack --name invoices --version 1.0.0
+python -m smithcore.pack push  ./my-pack --name invoices --version 1.0.0
+python -m smithcore.pack fetch https://host/api/packs/invoices/versions/1.0.0 --dest ./pack
+python -m smithcore.run_flow --pack ./pack --stage process
 ```
 
 Manifests are SHA-256 integrity-checked but not signed; only fetch packs
@@ -408,10 +408,10 @@ from an orchestrator you control.
 ## Install
 
 ```bash
-pip install smithy-engine             # core (no deps)
-pip install smithy-engine[windows]     # Windows UIA tools
-pip install smithy-engine[capture]     # selector capture (uiautomation + pynput + pyperclip)
-pip install smithy-engine[all]         # everything
+pip install smithcore-engine             # core (no deps)
+pip install smithcore-engine[windows]     # Windows UIA tools
+pip install smithcore-engine[capture]     # selector capture (uiautomation + pynput + pyperclip)
+pip install smithcore-engine[all]         # everything
 pip install -e ".[dev]"            # development
 ```
 
@@ -430,15 +430,15 @@ pip install -e ".[dev,windows,capture]"
 
 pytest                    # run tests
 ruff check src/ tests/    # linter
-mypy src/smithy --strict  # type check
+mypy src/smithcore --strict  # type check
 ```
 
 ## Project Structure
 
 ```
-src/smithy/
-├── __init__.py          — Public API: Smithy, ProcessHandle, Tool, errors
-├── facade.py            — Smithy facade (async tool dispatch, keyed selectors)
+src/smithcore/
+├── __init__.py          — Public API: Smithcore, ProcessHandle, Tool, errors
+├── facade.py            — Smithcore facade (async tool dispatch, keyed selectors)
 ├── flow.py              — FlowRunner (flow-v2 executor: tool/flow/set/if/loop nodes)
 ├── run_flow.py          — Runner CLI (--set/--vars/--tools/--validate/--pack/--transactional)
 ├── pack.py              — Packs: manifest build/verify, zip, fetch (SHA-256 integrity)
@@ -449,9 +449,9 @@ src/smithy/
 │   ├── schema.py        — Hand-rolled JSON Schema subset validator
 │   ├── retry.py         — RetryTool (attempts / delay / retry_on)
 │   ├── logging.py       — JsonlEventLogger (JSONL audit log middleware)
-│   ├── config.py        — TOML robot config + SMITHY_* env overlay
-│   ├── assets.py        — AssetProvider protocol, SMITHY_ASSET_* (runtime secrets)
-│   ├── files.py         — FileTool (SMITHY_FILE_ROOT sandbox)
+│   ├── config.py        — TOML robot config + SMITHCORE_* env overlay
+│   ├── assets.py        — AssetProvider protocol, SMITHCORE_ASSET_* (runtime secrets)
+│   ├── files.py         — FileTool (SMITHCORE_FILE_ROOT sandbox)
 │   ├── blocking.py      — run_blocking: COM apartment worker + timeout
 │   ├── redact.py        — secret redaction helpers
 │   ├── excel.py         — excel.read / excel.write / excel.append (openpyxl)

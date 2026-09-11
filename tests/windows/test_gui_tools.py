@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from smithy.core.errors import ElementNotFound, InvalidInput, PlatformError
-from smithy.windows.selector import ElementSelector
+from smithcore.core.errors import ElementNotFound, InvalidInput, PlatformError
+from smithcore.windows.selector import ElementSelector
 
 
 def _element(**attrs: Any) -> MagicMock:
@@ -21,45 +21,45 @@ def _element(**attrs: Any) -> MagicMock:
 class TestClickExtended:
     @pytest.mark.asyncio
     async def test_rejects_bad_button(self) -> None:
-        from smithy.windows.tools.click import ClickTool
+        from smithcore.windows.tools.click import ClickTool
 
         with pytest.raises(InvalidInput, match="button"):
             await ClickTool().execute({"button": "middle", "x": 1, "y": 2})
 
     @pytest.mark.asyncio
     async def test_rejects_bad_clicks(self) -> None:
-        from smithy.windows.tools.click import ClickTool
+        from smithcore.windows.tools.click import ClickTool
 
         with pytest.raises(InvalidInput, match="clicks"):
             await ClickTool().execute({"clicks": 3, "x": 1, "y": 2})
 
     @pytest.mark.asyncio
     async def test_rejects_bool_clicks(self) -> None:
-        from smithy.windows.tools.click import ClickTool
+        from smithcore.windows.tools.click import ClickTool
 
         with pytest.raises(InvalidInput, match="clicks"):
             await ClickTool().execute({"clicks": True, "x": 1, "y": 2})
 
     @pytest.mark.asyncio
     async def test_coordinate_click_calls_helper(self) -> None:
-        from smithy.windows.tools.click import ClickTool
+        from smithcore.windows.tools.click import ClickTool
 
-        with patch("smithy.windows.tools.click._click_at", return_value=None) as click_at:
+        with patch("smithcore.windows.tools.click._click_at", return_value=None) as click_at:
             result = await ClickTool().execute({"x": 10, "y": 20, "button": "right", "clicks": 2})
         click_at.assert_called_once_with(10, 20, "right", 2)
         assert result == {"status": "clicked", "button": "right", "clicks": 2}
 
     @pytest.mark.asyncio
     async def test_element_click_calls_helper(self) -> None:
-        from smithy.windows.tools.click import ClickTool
+        from smithcore.windows.tools.click import ClickTool
 
         el = _element()
         with (
             patch(
-                "smithy.windows.tools.click.resolve_element",
+                "smithcore.windows.tools.click.resolve_element",
                 new=AsyncMock(return_value=el),
             ),
-            patch("smithy.windows.tools.click._click_element", return_value=None) as click_el,
+            patch("smithcore.windows.tools.click._click_element", return_value=None) as click_el,
         ):
             result = await ClickTool().execute({"name": "OK"})
         click_el.assert_called_once()
@@ -67,11 +67,11 @@ class TestClickExtended:
 
     @pytest.mark.asyncio
     async def test_no_target_raises_not_found(self) -> None:
-        from smithy.windows.tools.click import ClickTool
+        from smithcore.windows.tools.click import ClickTool
 
         with (
             patch(
-                "smithy.windows.tools.click.resolve_element",
+                "smithcore.windows.tools.click.resolve_element",
                 new=AsyncMock(return_value=None),
             ),
             pytest.raises(ElementNotFound),
@@ -82,7 +82,7 @@ class TestClickExtended:
         import sys
         from types import ModuleType
 
-        from smithy.windows.tools.click import _click_at, _click_element
+        from smithcore.windows.tools.click import _click_at, _click_element
 
         fake = ModuleType("uiautomation")
         fake.Click = MagicMock()  # type: ignore[attr-defined]
@@ -108,7 +108,7 @@ class TestClickExtended:
 class TestWaitDisappear:
     @pytest.mark.asyncio
     async def test_disappear_true_when_missing(self) -> None:
-        from smithy.windows.tools.wait import WaitTool
+        from smithcore.windows.tools.wait import WaitTool
 
         with patch.object(
             ElementSelector,
@@ -122,7 +122,7 @@ class TestWaitDisappear:
 
     @pytest.mark.asyncio
     async def test_disappear_false_when_present(self) -> None:
-        from smithy.windows.tools.wait import WaitTool
+        from smithcore.windows.tools.wait import WaitTool
 
         with patch.object(ElementSelector, "find_from_desktop", return_value=MagicMock()):
             result = await WaitTool().execute(
@@ -132,14 +132,14 @@ class TestWaitDisappear:
 
     @pytest.mark.asyncio
     async def test_rejects_empty_selector(self) -> None:
-        from smithy.windows.tools.wait import WaitTool
+        from smithcore.windows.tools.wait import WaitTool
 
         with pytest.raises(InvalidInput, match="selector"):
             await WaitTool().execute({"timeout_ms": 1000})
 
     @pytest.mark.asyncio
     async def test_rejects_bad_wait_for(self) -> None:
-        from smithy.windows.tools.wait import WaitTool
+        from smithcore.windows.tools.wait import WaitTool
 
         with pytest.raises(InvalidInput, match="wait_for"):
             await WaitTool().execute({"wait_for": "eventually"})
@@ -148,14 +148,14 @@ class TestWaitDisappear:
 class TestScroll:
     @pytest.mark.asyncio
     async def test_scroll_down_default(self) -> None:
-        from smithy.windows.tools.scroll import ScrollTool
+        from smithcore.windows.tools.scroll import ScrollTool
 
         with (
             patch(
-                "smithy.windows.tools.scroll.resolve_point",
+                "smithcore.windows.tools.scroll.resolve_point",
                 new=AsyncMock(return_value=None),
             ),
-            patch("smithy.windows.tools.scroll._scroll_at", return_value=None) as at,
+            patch("smithcore.windows.tools.scroll._scroll_at", return_value=None) as at,
         ):
             result = await ScrollTool().execute({})
         at.assert_called_once_with(None, "down", 3)
@@ -163,14 +163,14 @@ class TestScroll:
 
     @pytest.mark.asyncio
     async def test_rejects_bad_direction(self) -> None:
-        from smithy.windows.tools.scroll import ScrollTool
+        from smithcore.windows.tools.scroll import ScrollTool
 
         with pytest.raises(InvalidInput, match="direction"):
             await ScrollTool().execute({"direction": "sideways"})
 
     @pytest.mark.asyncio
     async def test_rejects_zero_wheel(self) -> None:
-        from smithy.windows.tools.scroll import ScrollTool
+        from smithcore.windows.tools.scroll import ScrollTool
 
         with pytest.raises(InvalidInput, match="wheel_clicks"):
             await ScrollTool().execute({"wheel_clicks": 0})
@@ -179,7 +179,7 @@ class TestScroll:
         import sys
         from types import ModuleType
 
-        from smithy.windows.tools.scroll import _scroll_at
+        from smithcore.windows.tools.scroll import _scroll_at
 
         fake = ModuleType("uiautomation")
         fake.MoveTo = MagicMock()  # type: ignore[attr-defined]
@@ -197,14 +197,14 @@ class TestScroll:
 class TestHover:
     @pytest.mark.asyncio
     async def test_hover_moves(self) -> None:
-        from smithy.windows.tools.hover import HoverTool
+        from smithcore.windows.tools.hover import HoverTool
 
         with (
             patch(
-                "smithy.windows.tools.hover.resolve_point",
+                "smithcore.windows.tools.hover.resolve_point",
                 new=AsyncMock(return_value=(7, 8)),
             ),
-            patch("smithy.windows.tools.hover._move_to", return_value=None) as move,
+            patch("smithcore.windows.tools.hover._move_to", return_value=None) as move,
         ):
             result = await HoverTool().execute({"name": "File"})
         move.assert_called_once_with(7, 8)
@@ -212,11 +212,11 @@ class TestHover:
 
     @pytest.mark.asyncio
     async def test_hover_no_target_raises(self) -> None:
-        from smithy.windows.tools.hover import HoverTool
+        from smithcore.windows.tools.hover import HoverTool
 
         with (
             patch(
-                "smithy.windows.tools.hover.resolve_point",
+                "smithcore.windows.tools.hover.resolve_point",
                 new=AsyncMock(return_value=None),
             ),
             pytest.raises(ElementNotFound),
@@ -227,14 +227,14 @@ class TestHover:
 class TestExists:
     @pytest.mark.asyncio
     async def test_true_when_present(self) -> None:
-        from smithy.windows.tools.exists import ExistsTool
+        from smithcore.windows.tools.exists import ExistsTool
 
         with patch.object(ElementSelector, "find_from_desktop", return_value=MagicMock()):
             assert await ExistsTool().execute({"name": "OK"}) is True
 
     @pytest.mark.asyncio
     async def test_false_when_missing(self) -> None:
-        from smithy.windows.tools.exists import ExistsTool
+        from smithcore.windows.tools.exists import ExistsTool
 
         with patch.object(
             ElementSelector,
@@ -245,14 +245,14 @@ class TestExists:
 
     @pytest.mark.asyncio
     async def test_no_selector_rejected(self) -> None:
-        from smithy.windows.tools.exists import ExistsTool
+        from smithcore.windows.tools.exists import ExistsTool
 
         with pytest.raises(InvalidInput):
             await ExistsTool().execute({})
 
     @pytest.mark.asyncio
     async def test_platform_error_propagates(self) -> None:
-        from smithy.windows.tools.exists import ExistsTool
+        from smithcore.windows.tools.exists import ExistsTool
 
         with (
             patch.object(
@@ -268,11 +268,11 @@ class TestExists:
 class TestGetText:
     @pytest.mark.asyncio
     async def test_reads_value_pattern(self) -> None:
-        from smithy.windows.tools.get_text import GetTextTool
+        from smithcore.windows.tools.get_text import GetTextTool
 
         el = _element()
         with patch(
-            "smithy.windows.tools.get_text.resolve_element",
+            "smithcore.windows.tools.get_text.resolve_element",
             new=AsyncMock(return_value=el),
         ):
             result = await GetTextTool().execute({"name": "doc"})
@@ -281,11 +281,11 @@ class TestGetText:
 
     @pytest.mark.asyncio
     async def test_no_element_raises(self) -> None:
-        from smithy.windows.tools.get_text import GetTextTool
+        from smithcore.windows.tools.get_text import GetTextTool
 
         with (
             patch(
-                "smithy.windows.tools.get_text.resolve_element",
+                "smithcore.windows.tools.get_text.resolve_element",
                 new=AsyncMock(return_value=None),
             ),
             pytest.raises(ElementNotFound),
@@ -293,7 +293,7 @@ class TestGetText:
             await GetTextTool().execute({})
 
     def test_read_text_prefers_value_over_name(self) -> None:
-        from smithy.windows.tools.get_text import _read_text
+        from smithcore.windows.tools.get_text import _read_text
 
         pattern = MagicMock()
         pattern.Value = "typed"
@@ -316,12 +316,12 @@ class TestGetText:
 class TestWindow:
     @pytest.mark.asyncio
     async def test_activate_calls_apply(self) -> None:
-        from smithy.windows.tools.window import WindowTool
+        from smithcore.windows.tools.window import WindowTool
 
         ctrl = _element(NativeWindowHandle=1234)
         with (
             patch.object(ElementSelector, "find_from_desktop", return_value=ctrl),
-            patch("smithy.windows.tools.window._apply_action", return_value=None) as apply,
+            patch("smithcore.windows.tools.window._apply_action", return_value=None) as apply,
         ):
             result = await WindowTool().execute({"action": "activate", "pid": 42})
         apply.assert_called_once_with(1234, "activate", None)
@@ -329,28 +329,28 @@ class TestWindow:
 
     @pytest.mark.asyncio
     async def test_rejects_bad_action(self) -> None:
-        from smithy.windows.tools.window import WindowTool
+        from smithcore.windows.tools.window import WindowTool
 
         with pytest.raises(InvalidInput, match="action"):
             await WindowTool().execute({"action": "explode", "pid": 1})
 
     @pytest.mark.asyncio
     async def test_rejects_bool_pid(self) -> None:
-        from smithy.windows.tools.window import WindowTool
+        from smithcore.windows.tools.window import WindowTool
 
         with pytest.raises(InvalidInput, match="pid"):
             await WindowTool().execute({"action": "close", "pid": True})
 
     @pytest.mark.asyncio
     async def test_move_needs_geometry(self) -> None:
-        from smithy.windows.tools.window import WindowTool
+        from smithcore.windows.tools.window import WindowTool
 
         with pytest.raises(InvalidInput):
             await WindowTool().execute({"action": "move", "pid": 1, "x": 0, "y": 0})
 
     @pytest.mark.asyncio
     async def test_no_hwnd_raises_platform(self) -> None:
-        from smithy.windows.tools.window import WindowTool
+        from smithcore.windows.tools.window import WindowTool
 
         ctrl = _element(NativeWindowHandle=0)
         with (
@@ -360,25 +360,25 @@ class TestWindow:
             await WindowTool().execute({"action": "activate", "pid": 9})
 
     def test_apply_action_branches(self) -> None:
-        from smithy.windows.tools.window import _apply_action
+        from smithcore.windows.tools.window import _apply_action
 
         user32 = MagicMock()
-        with patch("smithy.windows.tools.window._user32", return_value=user32):
+        with patch("smithcore.windows.tools.window._user32", return_value=user32):
             _apply_action(111, "activate", None)
         user32.SetForegroundWindow.assert_called_once_with(111)
 
         user32 = MagicMock()
-        with patch("smithy.windows.tools.window._user32", return_value=user32):
+        with patch("smithcore.windows.tools.window._user32", return_value=user32):
             _apply_action(222, "minimize", None)
         user32.ShowWindow.assert_called_once()
 
         user32 = MagicMock()
-        with patch("smithy.windows.tools.window._user32", return_value=user32):
+        with patch("smithcore.windows.tools.window._user32", return_value=user32):
             _apply_action(333, "move", (1, 2, 800, 600))
         user32.SetWindowPos.assert_called_once()
 
         user32 = MagicMock()
-        with patch("smithy.windows.tools.window._user32", return_value=user32):
+        with patch("smithcore.windows.tools.window._user32", return_value=user32):
             _apply_action(444, "close", None)
         user32.PostMessageW.assert_called_once()
 
@@ -386,13 +386,13 @@ class TestWindow:
 class TestSelect:
     @pytest.mark.asyncio
     async def test_select_calls_pattern(self) -> None:
-        from smithy.windows.tools.select import SelectTool
+        from smithcore.windows.tools.select import SelectTool
 
         pattern = MagicMock()
         el = MagicMock()
         el.GetSelectionItemPattern.return_value = pattern
         with patch(
-            "smithy.windows.tools.select.resolve_element",
+            "smithcore.windows.tools.select.resolve_element",
             new=AsyncMock(return_value=el),
         ):
             result = await SelectTool().execute({"name": "Option A"})
@@ -401,11 +401,11 @@ class TestSelect:
 
     @pytest.mark.asyncio
     async def test_no_element_raises(self) -> None:
-        from smithy.windows.tools.select import SelectTool
+        from smithcore.windows.tools.select import SelectTool
 
         with (
             patch(
-                "smithy.windows.tools.select.resolve_element",
+                "smithcore.windows.tools.select.resolve_element",
                 new=AsyncMock(return_value=None),
             ),
             pytest.raises(ElementNotFound),
@@ -414,13 +414,13 @@ class TestSelect:
 
     @pytest.mark.asyncio
     async def test_unsupported_selection_is_platform_error(self) -> None:
-        from smithy.windows.tools.select import SelectTool
+        from smithcore.windows.tools.select import SelectTool
 
         el = MagicMock()
         el.GetSelectionItemPattern.side_effect = RuntimeError("no pattern")
         with (
             patch(
-                "smithy.windows.tools.select.resolve_element",
+                "smithcore.windows.tools.select.resolve_element",
                 new=AsyncMock(return_value=el),
             ),
             pytest.raises(PlatformError),
@@ -431,15 +431,15 @@ class TestSelect:
 class TestDrag:
     @pytest.mark.asyncio
     async def test_drag_both_endpoints(self) -> None:
-        from smithy.windows.tools import drag as drag_mod
-        from smithy.windows.tools.drag import DragTool
+        from smithcore.windows.tools import drag as drag_mod
+        from smithcore.windows.tools.drag import DragTool
 
         async def fake_endpoint(config: dict[str, Any], prefix: str) -> tuple[int, int] | None:
             return (0, 0) if prefix == "from_" else (100, 200)
 
         with (
             patch.object(drag_mod, "_resolve_endpoint", side_effect=fake_endpoint),
-            patch("smithy.windows.tools.drag._drag_drop", return_value=None) as dd,
+            patch("smithcore.windows.tools.drag._drag_drop", return_value=None) as dd,
         ):
             result = await DragTool().execute({"from_x": 0, "from_y": 0})
         dd.assert_called_once_with((0, 0), (100, 200))
@@ -447,8 +447,8 @@ class TestDrag:
 
     @pytest.mark.asyncio
     async def test_drag_missing_endpoint_rejected(self) -> None:
-        from smithy.windows.tools import drag as drag_mod
-        from smithy.windows.tools.drag import DragTool
+        from smithcore.windows.tools import drag as drag_mod
+        from smithcore.windows.tools.drag import DragTool
 
         async def fake_endpoint(config: dict[str, Any], prefix: str) -> tuple[int, int] | None:
             return None if prefix == "to_" else (1, 1)
@@ -463,7 +463,7 @@ class TestDrag:
         import sys
         from types import ModuleType
 
-        from smithy.windows.tools.drag import _drag_drop
+        from smithcore.windows.tools.drag import _drag_drop
 
         fake = ModuleType("uiautomation")
         fake.DragDrop = MagicMock()  # type: ignore[attr-defined]
@@ -475,8 +475,8 @@ class TestDrag:
 class TestClipboard:
     @pytest.mark.asyncio
     async def test_get_returns_text(self) -> None:
-        from smithy.windows.tools import clipboard as cb_mod
-        from smithy.windows.tools.clipboard import ClipboardTool
+        from smithcore.windows.tools import clipboard as cb_mod
+        from smithcore.windows.tools.clipboard import ClipboardTool
 
         fake = MagicMock()
         fake.paste.return_value = "hello"
@@ -486,8 +486,8 @@ class TestClipboard:
 
     @pytest.mark.asyncio
     async def test_set_copies(self) -> None:
-        from smithy.windows.tools import clipboard as cb_mod
-        from smithy.windows.tools.clipboard import ClipboardTool
+        from smithcore.windows.tools import clipboard as cb_mod
+        from smithcore.windows.tools.clipboard import ClipboardTool
 
         fake = MagicMock()
         with patch.object(cb_mod, "_load_pyperclip", return_value=fake):
@@ -497,22 +497,22 @@ class TestClipboard:
 
     @pytest.mark.asyncio
     async def test_rejects_bad_action(self) -> None:
-        from smithy.windows.tools.clipboard import ClipboardTool
+        from smithcore.windows.tools.clipboard import ClipboardTool
 
         with pytest.raises(InvalidInput, match="action"):
             await ClipboardTool().execute({"action": "paste"})
 
     @pytest.mark.asyncio
     async def test_set_needs_text(self) -> None:
-        from smithy.windows.tools.clipboard import ClipboardTool
+        from smithcore.windows.tools.clipboard import ClipboardTool
 
         with pytest.raises(InvalidInput, match="text"):
             await ClipboardTool().execute({"action": "set"})
 
     @pytest.mark.asyncio
     async def test_missing_pyperclip_is_platform_error(self) -> None:
-        from smithy.windows.tools import clipboard as cb_mod
-        from smithy.windows.tools.clipboard import ClipboardTool
+        from smithcore.windows.tools import clipboard as cb_mod
+        from smithcore.windows.tools.clipboard import ClipboardTool
 
         with (
             patch.object(
@@ -528,7 +528,7 @@ class TestClipboard:
 class TestListElements:
     @pytest.mark.asyncio
     async def test_lists_children(self) -> None:
-        from smithy.windows.tools.list_elements import ListElementsTool
+        from smithcore.windows.tools.list_elements import ListElementsTool
 
         kids = [
             _element(Name="OK", AutomationId="ok_btn", HasChildren=False),
@@ -541,7 +541,7 @@ class TestListElements:
             parent.GetFirstChildControl.return_value.GetNextSiblingControl.return_value.GetNextSiblingControl
         ).return_value = None
         with patch(
-            "smithy.windows.tools.list_elements.resolve_element",
+            "smithcore.windows.tools.list_elements.resolve_element",
             new=AsyncMock(return_value=parent),
         ):
             result = await ListElementsTool().execute({"name": "dlg", "max_items": 10})
@@ -551,11 +551,11 @@ class TestListElements:
 
     @pytest.mark.asyncio
     async def test_no_parent_raises(self) -> None:
-        from smithy.windows.tools.list_elements import ListElementsTool
+        from smithcore.windows.tools.list_elements import ListElementsTool
 
         with (
             patch(
-                "smithy.windows.tools.list_elements.resolve_element",
+                "smithcore.windows.tools.list_elements.resolve_element",
                 new=AsyncMock(return_value=None),
             ),
             pytest.raises(ElementNotFound),
@@ -564,12 +564,12 @@ class TestListElements:
 
     @pytest.mark.asyncio
     async def test_bad_max_items_rejected(self) -> None:
-        from smithy.windows.tools.list_elements import ListElementsTool
+        from smithcore.windows.tools.list_elements import ListElementsTool
 
         parent = MagicMock()
         with (
             patch(
-                "smithy.windows.tools.list_elements.resolve_element",
+                "smithcore.windows.tools.list_elements.resolve_element",
                 new=AsyncMock(return_value=parent),
             ),
             pytest.raises(InvalidInput, match="max_items"),
@@ -580,17 +580,17 @@ class TestListElements:
 class TestHighlight:
     @pytest.mark.asyncio
     async def test_highlight_flashes(self) -> None:
-        from smithy.windows.tools.highlight import HighlightTool
+        from smithcore.windows.tools.highlight import HighlightTool
 
         rect = MagicMock(left=1, top=2, right=30, bottom=40)
         el = MagicMock()
         el.BoundingRectangle = rect
         with (
             patch(
-                "smithy.windows.tools.highlight.resolve_element",
+                "smithcore.windows.tools.highlight.resolve_element",
                 new=AsyncMock(return_value=el),
             ),
-            patch("smithy.windows.tools.highlight._flash_rect", return_value=None) as flash,
+            patch("smithcore.windows.tools.highlight._flash_rect", return_value=None) as flash,
         ):
             result = await HighlightTool().execute({"name": "OK", "color": "green"})
         assert flash.call_count == 1
@@ -598,12 +598,12 @@ class TestHighlight:
 
     @pytest.mark.asyncio
     async def test_rejects_bad_color(self) -> None:
-        from smithy.windows.tools.highlight import HighlightTool
+        from smithcore.windows.tools.highlight import HighlightTool
 
         el = MagicMock()
         with (
             patch(
-                "smithy.windows.tools.highlight.resolve_element",
+                "smithcore.windows.tools.highlight.resolve_element",
                 new=AsyncMock(return_value=el),
             ),
             pytest.raises(InvalidInput, match="color"),
@@ -612,11 +612,11 @@ class TestHighlight:
 
     @pytest.mark.asyncio
     async def test_no_element_raises(self) -> None:
-        from smithy.windows.tools.highlight import HighlightTool
+        from smithcore.windows.tools.highlight import HighlightTool
 
         with (
             patch(
-                "smithy.windows.tools.highlight.resolve_element",
+                "smithcore.windows.tools.highlight.resolve_element",
                 new=AsyncMock(return_value=None),
             ),
             pytest.raises(ElementNotFound),
@@ -626,7 +626,7 @@ class TestHighlight:
 
 class TestFactoryAndFacade:
     def test_factory_returns_all_tools(self) -> None:
-        from smithy.windows.tools import windows_tools
+        from smithcore.windows.tools import windows_tools
 
         tools = windows_tools()
         assert len(tools) == 30
@@ -655,9 +655,9 @@ class TestFactoryAndFacade:
 
     @pytest.mark.asyncio
     async def test_facade_click_forwards_params(self) -> None:
-        from smithy.facade import Smithy
+        from smithcore.facade import Smithcore
 
-        bot = Smithy(tools=[])
+        bot = Smithcore(tools=[])
         with patch.object(bot, "_execute", new=AsyncMock(return_value={"status": "clicked"})) as ex:
             await bot.click(x=5, y=6, button="right", clicks=2)
         ex.assert_called_once()
@@ -667,18 +667,18 @@ class TestFactoryAndFacade:
 
     @pytest.mark.asyncio
     async def test_facade_wait_forwards_wait_for(self) -> None:
-        from smithy.facade import Smithy
+        from smithcore.facade import Smithcore
 
-        bot = Smithy(tools=[])
+        bot = Smithcore(tools=[])
         with patch.object(bot, "_execute", new=AsyncMock(return_value=True)) as ex:
             assert await bot.wait(name="OK", wait_for="disappear") is True
         assert ex.call_args[0][1]["wait_for"] == "disappear"
 
     @pytest.mark.asyncio
     async def test_facade_scroll_hover_exists_get_text(self) -> None:
-        from smithy.facade import Smithy
+        from smithcore.facade import Smithcore
 
-        bot = Smithy(tools=[])
+        bot = Smithcore(tools=[])
         with patch.object(bot, "_execute", new=AsyncMock(return_value={"status": "scrolled"})):
             out = await bot.scroll(direction="up", wheel_clicks=1)
             assert out["status"] == "scrolled"
@@ -696,9 +696,9 @@ class TestFactoryAndFacade:
 
     @pytest.mark.asyncio
     async def test_facade_window_select_drag_clipboard_list_highlight(self) -> None:
-        from smithy.facade import Smithy
+        from smithcore.facade import Smithcore
 
-        bot = Smithy(tools=[])
+        bot = Smithcore(tools=[])
         with patch.object(
             bot,
             "_execute",

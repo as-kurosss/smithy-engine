@@ -1,4 +1,4 @@
-"""Tests for smithy.run_flow CLI: --validate mode and exit codes."""
+"""Tests for smithcore.run_flow CLI: --validate mode and exit codes."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from smithy import run_flow
+from smithcore import run_flow
 
 
 def _write(tmp_path: Path, doc: dict[str, Any], name: str = "flow.json") -> Path:
@@ -124,7 +124,7 @@ class TestDocumentVariables:
 class TestExitCodes:
     def test_finished_returns_zero(self, tmp_path: Path, monkeypatch: Any) -> None:
         path = _write(tmp_path, _clean_doc())
-        monkeypatch.setenv("SMITHY_SELECTOR_STORE", str(tmp_path / "sel.json"))
+        monkeypatch.setenv("SMITHCORE_SELECTOR_STORE", str(tmp_path / "sel.json"))
         assert run_flow.main([str(path)]) == 0
 
     def test_flow_failure_returns_one(self, tmp_path: Path) -> None:

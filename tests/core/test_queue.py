@@ -9,8 +9,8 @@ from typing import Any
 
 import pytest
 
-from smithy.core.errors import InvalidInput
-from smithy.core.queue import InMemoryQueue, LeaseRenewable, Queue, SqliteQueue
+from smithcore.core.errors import InvalidInput
+from smithcore.core.queue import InMemoryQueue, LeaseRenewable, Queue, SqliteQueue
 
 RUN_ID = "run-1"
 OTHER_RUN = "run-2"

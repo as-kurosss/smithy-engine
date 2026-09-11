@@ -8,10 +8,10 @@ from typing import Any
 
 import pytest
 
-from smithy.core.errors import BusinessError, Cancelled, InfrastructureError, InvalidInput
-from smithy.core.events import ToolEvent
-from smithy.core.queue import ClaimedItem, InMemoryQueue, LeaseRenewable, Queue
-from smithy.core.transactions import (
+from smithcore.core.errors import BusinessError, Cancelled, InfrastructureError, InvalidInput
+from smithcore.core.events import ToolEvent
+from smithcore.core.queue import ClaimedItem, InMemoryQueue, LeaseRenewable, Queue
+from smithcore.core.transactions import (
     ItemOutcome,
     TransactionContextMiddleware,
     TransactionReport,

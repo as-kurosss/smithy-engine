@@ -9,11 +9,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from smithy.core.errors import ToolError
-from smithy.windows.tools.selector_capture import api as capture_api
-from smithy.windows.tools.selector_capture.api import CaptureCancelled, capture_once
-from smithy.windows.tools.selector_capture.capture import BestSelector, PathNode
-from smithy.windows.tools.selector_capture.recorder import SharedEvent
+from smithcore.core.errors import ToolError
+from smithcore.windows.tools.selector_capture import api as capture_api
+from smithcore.windows.tools.selector_capture.api import CaptureCancelled, capture_once
+from smithcore.windows.tools.selector_capture.capture import BestSelector, PathNode
+from smithcore.windows.tools.selector_capture.recorder import SharedEvent
 
 
 class _FakeGroup:
@@ -106,7 +106,7 @@ class TestCaptureOnce:
 
     @pytest.mark.asyncio
     async def test_async_twin(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from smithy.windows.tools.selector_capture import capture_once_async
+        from smithcore.windows.tools.selector_capture import capture_once_async
 
         _patch_capture_backend(monkeypatch)
         captured = await capture_once_async()

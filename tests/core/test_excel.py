@@ -1,4 +1,4 @@
-"""Tests for smithy.core.excel — excel.read / excel.write / excel.append."""
+"""Tests for smithcore.core.excel — excel.read / excel.write / excel.append."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from smithy.core.errors import InvalidInput, PlatformError
-from smithy.core.excel import ExcelAppendTool, ExcelReadTool, ExcelWriteTool
+from smithcore.core.errors import InvalidInput, PlatformError
+from smithcore.core.excel import ExcelAppendTool, ExcelReadTool, ExcelWriteTool
 
 pytest.importorskip("openpyxl")
 

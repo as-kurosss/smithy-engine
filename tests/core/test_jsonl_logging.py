@@ -1,4 +1,4 @@
-"""Tests for smithy.core.logging — JsonlEventLogger."""
+"""Tests for smithcore.core.logging — JsonlEventLogger."""
 
 from __future__ import annotations
 
@@ -8,10 +8,10 @@ from typing import Any
 
 import pytest
 
-from smithy.core.errors import ElementNotFound
-from smithy.core.events import ToolEvent
-from smithy.core.logging import JsonlEventLogger
-from smithy.core.transactions import current_transaction_id
+from smithcore.core.errors import ElementNotFound
+from smithcore.core.events import ToolEvent
+from smithcore.core.logging import JsonlEventLogger
+from smithcore.core.transactions import current_transaction_id
 
 
 def _read_lines(path: Path) -> list[dict[str, Any]]:

@@ -1,4 +1,4 @@
-"""Tests for smithy.facade — Smithy facade class and ProcessHandle."""
+"""Tests for smithcore.facade — Smithcore facade class and ProcessHandle."""
 
 from __future__ import annotations
 
@@ -6,9 +6,9 @@ from typing import Any
 
 import pytest
 
-from smithy.core.errors import InvalidInput
-from smithy.core.tool import AbstractTool
-from smithy.facade import ProcessHandle, Smithy
+from smithcore.core.errors import InvalidInput
+from smithcore.core.tool import AbstractTool
+from smithcore.facade import ProcessHandle, Smithcore
 
 # --- Stubs ---
 
@@ -90,25 +90,25 @@ class TestProcessHandle:
         assert a == b
 
 
-class TestSmithyInit:
+class TestSmithcoreInit:
     def test_empty(self) -> None:
-        bot = Smithy()
+        bot = Smithcore()
         assert bot._registry.list_tools() == []
 
     def test_with_tools(self) -> None:
-        bot = Smithy(tools=[StubTool(tool_name="a"), StubTool(tool_name="b")])
+        bot = Smithcore(tools=[StubTool(tool_name="a"), StubTool(tool_name="b")])
         assert sorted(bot._registry.list_tools()) == ["a", "b"]
 
     def test_register(self) -> None:
-        bot = Smithy()
+        bot = Smithcore()
         bot.register(StubTool(tool_name="x"))
         assert bot._registry.get("x") is not None
 
 
-class TestSmithyProcess:
+class TestSmithcoreProcess:
     @pytest.mark.asyncio
     async def test_process_returns_handle(self) -> None:
-        bot = Smithy(tools=[ProcessStub()])
+        bot = Smithcore(tools=[ProcessStub()])
         handle = await bot.process_run("notepad.exe")
         assert isinstance(handle, ProcessHandle)
         assert handle.pid == 12345
@@ -116,28 +116,28 @@ class TestSmithyProcess:
 
     @pytest.mark.asyncio
     async def test_process_no_tool_raises(self) -> None:
-        bot = Smithy()
+        bot = Smithcore()
         with pytest.raises(InvalidInput, match="not found"):
             await bot.process_run("notepad.exe")
 
 
-class TestSmithyClick:
+class TestSmithcoreClick:
     @pytest.mark.asyncio
     async def test_click_with_handle(self) -> None:
-        bot = Smithy(tools=[ClickStub()])
+        bot = Smithcore(tools=[ClickStub()])
         handle = ProcessHandle(pid=42, name="app")
         result = await bot.click(handle, name="OK")
         assert result.status == "clicked"
 
     @pytest.mark.asyncio
     async def test_click_without_handle(self) -> None:
-        bot = Smithy(tools=[ClickStub()])
+        bot = Smithcore(tools=[ClickStub()])
         result = await bot.click(name="OK")
         assert result.status == "clicked"
 
     @pytest.mark.asyncio
     async def test_click_with_element_key(self) -> None:
-        bot = Smithy(tools=[ClickStub()])
+        bot = Smithcore(tools=[ClickStub()])
         result = await bot.click(element_key="my_elem")
         assert result.status == "clicked"
 
@@ -162,7 +162,7 @@ class TestSmithyClick:
                 received.update(config)
                 return {"status": "clicked"}
 
-        bot = Smithy(tools=[CaptureClick()])
+        bot = Smithcore(tools=[CaptureClick()])
         handle = ProcessHandle(pid=99, name="app")
         await bot.click(handle, name="Button")
         assert received["pid"] == 99
@@ -189,17 +189,17 @@ class TestSmithyClick:
                 received.update(config)
                 return {"status": "clicked"}
 
-        bot = Smithy(tools=[CaptureClick()])
+        bot = Smithcore(tools=[CaptureClick()])
         handle = ProcessHandle(pid=99, name="app")
         await bot.click(handle, name="Button", pid=55)
         assert received["pid"] == 55  # explicit pid wins
 
 
-class TestSmithyInputText:
+class TestSmithcoreInputText:
     @pytest.mark.asyncio
     async def test_input_text_with_handle(self) -> None:
         stub = StubTool(tool_name="windows.input_text", output={"status": "typed"})
-        bot = Smithy(tools=[stub])
+        bot = Smithcore(tools=[stub])
         handle = ProcessHandle(pid=42, name="app")
         result = await bot.input_text(handle, text="hello")
         assert result.status == "typed"
@@ -207,7 +207,7 @@ class TestSmithyInputText:
     @pytest.mark.asyncio
     async def test_input_text_without_handle(self) -> None:
         stub = StubTool(tool_name="windows.input_text", output={"status": "typed"})
-        bot = Smithy(tools=[stub])
+        bot = Smithcore(tools=[stub])
         result = await bot.input_text(text="hello")
         assert result.status == "typed"
 
@@ -231,7 +231,7 @@ class TestSmithyInputText:
                 received.update(config)
                 return {"status": "typed"}
 
-        bot = Smithy(tools=[Capture()])
+        bot = Smithcore(tools=[Capture()])
         handle = ProcessHandle(pid=99, name="app")
         await bot.input_text(handle, text="hi")
         assert received["pid"] == 99
@@ -258,7 +258,7 @@ class TestSmithyInputText:
                 received.update(config)
                 return {"status": "typed"}
 
-        bot = Smithy(tools=[Capture()])
+        bot = Smithcore(tools=[Capture()])
         handle = ProcessHandle(pid=99, name="app")
         await bot.input_text(handle, text="hello")
         # text must be a string, not a ProcessHandle
@@ -266,11 +266,11 @@ class TestSmithyInputText:
         assert received["pid"] == 99
 
 
-class TestSmithySetText:
+class TestSmithcoreSetText:
     @pytest.mark.asyncio
     async def test_set_text_with_handle(self) -> None:
         stub = StubTool(tool_name="windows.set_text", output={"status": "set"})
-        bot = Smithy(tools=[stub])
+        bot = Smithcore(tools=[stub])
         handle = ProcessHandle(pid=42, name="app")
         result = await bot.set_text(handle, text="hello")
         assert result.status == "set"
@@ -278,7 +278,7 @@ class TestSmithySetText:
     @pytest.mark.asyncio
     async def test_set_text_without_handle(self) -> None:
         stub = StubTool(tool_name="windows.set_text", output={"status": "set"})
-        bot = Smithy(tools=[stub])
+        bot = Smithcore(tools=[stub])
         result = await bot.set_text(text="hello")
         assert result.status == "set"
 
@@ -302,18 +302,18 @@ class TestSmithySetText:
                 received.update(config)
                 return {"status": "set"}
 
-        bot = Smithy(tools=[Capture()])
+        bot = Smithcore(tools=[Capture()])
         handle = ProcessHandle(pid=99, name="app")
         await bot.set_text(handle, text="hello")
         assert isinstance(received["text"], str)
         assert received["pid"] == 99
 
 
-class TestSmithyGetElement:
+class TestSmithcoreGetElement:
     @pytest.mark.asyncio
     async def test_get_element_with_handle(self) -> None:
         output = {"element": {"name": "OK"}}
-        bot = Smithy(tools=[StubTool(tool_name="windows.get_element", output=output)])
+        bot = Smithcore(tools=[StubTool(tool_name="windows.get_element", output=output)])
         handle = ProcessHandle(pid=42, name="app")
         result = await bot.get_element(handle)
         assert result == output
@@ -321,20 +321,20 @@ class TestSmithyGetElement:
     @pytest.mark.asyncio
     async def test_get_element_without_handle(self) -> None:
         output = {"element": {"name": "OK"}}
-        bot = Smithy(tools=[StubTool(tool_name="windows.get_element", output=output)])
+        bot = Smithcore(tools=[StubTool(tool_name="windows.get_element", output=output)])
         result = await bot.get_element(name="OK")
         assert result == output
 
 
-class TestSmithyCall:
+class TestSmithcoreCall:
     @pytest.mark.asyncio
     async def test_call_custom_tool(self) -> None:
-        bot = Smithy(tools=[StubTool(tool_name="custom", output="done")])
+        bot = Smithcore(tools=[StubTool(tool_name="custom", output="done")])
         result = await bot.call("custom")
         assert result == "done"
 
     @pytest.mark.asyncio
     async def test_call_nonexistent_raises(self) -> None:
-        bot = Smithy()
+        bot = Smithcore()
         with pytest.raises(InvalidInput, match="not found"):
             await bot.call("no.such.tool")

@@ -7,12 +7,12 @@ import threading
 
 import pytest
 
-from smithy.flow import validate_document
-from smithy.windows.tools.selector_capture.capture import BestSelector
-from smithy.windows.tools.selector_capture.flowgen import nodes_to_flow
-from smithy.windows.tools.selector_capture.generate import FlowNode
-from smithy.windows.tools.selector_capture.record import _reduce_events
-from smithy.windows.tools.selector_capture.recorder import SeriesEvent
+from smithcore.flow import validate_document
+from smithcore.windows.tools.selector_capture.capture import BestSelector
+from smithcore.windows.tools.selector_capture.flowgen import nodes_to_flow
+from smithcore.windows.tools.selector_capture.generate import FlowNode
+from smithcore.windows.tools.selector_capture.record import _reduce_events
+from smithcore.windows.tools.selector_capture.recorder import SeriesEvent
 
 
 def _selector() -> BestSelector:

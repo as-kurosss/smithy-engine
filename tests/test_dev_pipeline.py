@@ -9,11 +9,11 @@ from typing import Any
 
 import pytest
 
-from smithy import run_flow
-from smithy.core.queue import SqliteQueue
-from smithy.core.selectors import SelectorStore
-from smithy.core.tool import AbstractTool
-from smithy.facade import Smithy
+from smithcore import run_flow
+from smithcore.core.queue import SqliteQueue
+from smithcore.core.selectors import SelectorStore
+from smithcore.core.tool import AbstractTool
+from smithcore.facade import Smithcore
 
 
 class EchoTool(AbstractTool):
@@ -74,7 +74,7 @@ class TestFlowTracer:
             "editor", {"automation_id": "15", "class_name": "Edit"}
         )
         trace_path = tmp_path / "bot.flow.json"
-        bot = Smithy(
+        bot = Smithcore(
             tools=[ClickStub()],
             selector_store=tmp_path / "sel.json",
             dev_capture=True,
@@ -94,7 +94,7 @@ class TestFlowTracer:
     @pytest.mark.asyncio
     async def test_failed_calls_are_not_steps(self, tmp_path: Path) -> None:
         trace_path = tmp_path / "t.flow.json"
-        bot = Smithy(tools=[FailingTool(), EchoTool()], trace=trace_path)
+        bot = Smithcore(tools=[FailingTool(), EchoTool()], trace=trace_path)
         with pytest.raises(RuntimeError, match="boom"):
             await bot.call("test.fail")
         await bot.call("test.echo", a=1)
@@ -105,7 +105,7 @@ class TestFlowTracer:
     @pytest.mark.asyncio
     async def test_two_calls_chain_linearly(self, tmp_path: Path) -> None:
         trace_path = tmp_path / "t.flow.json"
-        bot = Smithy(tools=[EchoTool()], trace=trace_path)
+        bot = Smithcore(tools=[EchoTool()], trace=trace_path)
         await bot.call("test.echo", step=1)
         await bot.call("test.echo", step=2)
         doc = json.loads(trace_path.read_text(encoding="utf-8"))
@@ -121,7 +121,7 @@ class TestToolsLoader:
     def test_loads_tools_list_convention(self, tmp_path: Path) -> None:
         module = tmp_path / "my_tools.py"
         module.write_text(
-            "from smithy.core.tool import AbstractTool\n"
+            "from smithcore.core.tool import AbstractTool\n"
             "from typing import Any\n"
             "class T(AbstractTool):\n"
             "    @property\n"
@@ -137,7 +137,7 @@ class TestToolsLoader:
             "TOOLS = [T()]\n",
             encoding="utf-8",
         )
-        from smithy.run_flow import _load_tools
+        from smithcore.run_flow import _load_tools
 
         tools = _load_tools(str(module))
         assert [t.name for t in tools] == ["my.tool"]
@@ -145,7 +145,7 @@ class TestToolsLoader:
     def test_scans_module_instances_without_tools_list(self, tmp_path: Path) -> None:
         module = tmp_path / "bare_tools.py"
         module.write_text(
-            "from smithy.core.tool import AbstractTool\n"
+            "from smithcore.core.tool import AbstractTool\n"
             "from typing import Any\n"
             "class T(AbstractTool):\n"
             "    @property\n"
@@ -161,7 +161,7 @@ class TestToolsLoader:
             "t = T()\n",
             encoding="utf-8",
         )
-        from smithy.run_flow import _load_tools
+        from smithcore.run_flow import _load_tools
 
         tools = _load_tools(str(module))
         assert [t.name for t in tools] == ["bare.tool"]
@@ -179,7 +179,7 @@ class TestVarsMerge:
         payload.write_text(json.dumps({"a": 1, "b": 2, "c": 3}), encoding="utf-8")
         vars_file.write_text(json.dumps({"b": 20, "c": 30}), encoding="utf-8")
 
-        from smithy import run_flow as run_flow_module
+        from smithcore import run_flow as run_flow_module
 
         captured: dict[str, Any] = {}
 
